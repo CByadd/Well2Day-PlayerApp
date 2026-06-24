@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- USB device filter for BMI machine sensors -->
+    <!-- This allows the app to detect and connect to USB serial devices -->
+    
+    <!-- Generic USB Serial devices (FTDI, CH340, CP210x, etc.) -->
+    <!-- Most BMI machines use these common USB-to-Serial chips -->
+    
+    <!-- FTDI devices (common in many USB serial adapters) -->
+    <usb-device vendor-id="1027" />
+    
+    <!-- CH340/CH341 devices (very common in Chinese USB serial adapters) -->
+    <usb-device vendor-id="6790" />
+    
+    <!-- Prolific PL2303 devices -->
+    <usb-device vendor-id="1659" />
+    
+    <!-- Silicon Labs CP210x devices -->
+    <usb-device vendor-id="4292" />
+    
+    <!-- Generic CDC ACM devices -->
+    <usb-device class="2" />
+    
+    <!-- Allow any USB serial device (fallback) -->
+    <!-- This ensures compatibility with various BMI sensor manufacturers -->
+</resources>
+
+
+
