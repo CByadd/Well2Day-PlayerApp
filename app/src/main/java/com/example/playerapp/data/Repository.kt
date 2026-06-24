@@ -1410,6 +1410,10 @@ object Repository {
                                 // Parse admin-controlled app mode (F1 / F2 / PlayerOnly)
                                 val appMode = player.optString("appMode", null)
                                     ?.takeIf { it.isNotBlank() }
+
+                                // Parse admin-controlled rotation
+                                val rotation = player.optString("rotation", "portrait")
+                                    ?.takeIf { it.isNotBlank() } ?: "portrait"
                                 
                                 // Extract additional fields for persistent storage
                                 val deviceName = player.optString("deviceName", null)
@@ -1436,10 +1440,11 @@ object Repository {
                                         flowDrawerEnabled = flowDrawerEnabled,
                                         flowDrawerSlotCount = flowDrawerSlotCount,
                                         hideScreenId = hideScreenId,
-                                        appMode = appMode
+                                        appMode = appMode,
+                                        rotation = rotation
                                     )
                                     InfoStorage.saveInfo(ctx, screenInfo)
-                                    println("DEBUG: Repository.getAdscapePlayerInfo - Saved to info.json: screenName=$deviceName, location=$location, heightCalibrationEnabled=$heightCalibrationEnabled, flowDrawerEnabled=$flowDrawerEnabled, flowDrawerSlotCount=$flowDrawerSlotCount, hideScreenId=$hideScreenId, playlistId=$playlistId, paymentAmount=$paymentAmount, appMode=$appMode")
+                                    println("DEBUG: Repository.getAdscapePlayerInfo - Saved to info.json: screenName=$deviceName, location=$location, heightCalibrationEnabled=$heightCalibrationEnabled, flowDrawerEnabled=$flowDrawerEnabled, flowDrawerSlotCount=$flowDrawerSlotCount, hideScreenId=$hideScreenId, playlistId=$playlistId, paymentAmount=$paymentAmount, appMode=$appMode, rotation=$rotation")
                                     
                                     // If playlistId is null, immediately clear cached assets to stop playback
                                     if (playlistId == null) {

@@ -24,7 +24,9 @@ import java.io.IOException
             val flowDrawerSlotCount: Int?,
             val hideScreenId: Boolean?,
             /** App operating mode pushed by admin: "F1", "F2", or "PlayerOnly" */
-            val appMode: String? = null
+            val appMode: String? = null,
+            /** Hardware/display rotation of the app: "landscape", "portrait", "reverse_landscape", "reverse_portrait" */
+            val rotation: String? = "portrait"
         )
     
     /**
@@ -48,6 +50,7 @@ import java.io.IOException
                 if (info.flowDrawerSlotCount != null) put("flowDrawerSlotCount", info.flowDrawerSlotCount)
                 if (info.hideScreenId != null) put("hideScreenId", info.hideScreenId)
                 if (info.appMode != null) put("appMode", info.appMode)
+                if (info.rotation != null) put("rotation", info.rotation)
             }
             
             file.writeText(json.toString(2)) // Pretty print with 2-space indent
@@ -105,7 +108,8 @@ import java.io.IOException
                 hideScreenId = if (json.has("hideScreenId") && !json.isNull("hideScreenId")) {
                     json.optBoolean("hideScreenId", false)
                 } else null,
-                appMode = json.optString("appMode", null).takeIf { !it.isNullOrBlank() }
+                appMode = json.optString("appMode", null).takeIf { !it.isNullOrBlank() },
+                rotation = json.optString("rotation", "portrait").takeIf { !it.isNullOrBlank() }
             )
             
             println("DEBUG: InfoStorage - Loaded info.json: screenId=${info.screenId}, screenName=${info.screenName}, location=${info.location}, heightCalibration=${info.heightCalibration}, heightCalibrationEnabled=${info.heightCalibrationEnabled}, playlistId=${info.playlistId}, paymentAmount=${info.paymentAmount}")
@@ -138,7 +142,8 @@ import java.io.IOException
                 flowDrawerEnabled = info.flowDrawerEnabled ?: existingInfo.flowDrawerEnabled,
                 flowDrawerSlotCount = info.flowDrawerSlotCount ?: existingInfo.flowDrawerSlotCount,
                 hideScreenId = info.hideScreenId ?: existingInfo.hideScreenId,
-                appMode = info.appMode ?: existingInfo.appMode
+                appMode = info.appMode ?: existingInfo.appMode,
+                rotation = info.rotation ?: existingInfo.rotation
             )
             
             // Save merged info
@@ -250,5 +255,12 @@ import java.io.IOException
      */
     fun getAppMode(context: Context): String? {
         return loadInfo(context)?.appMode
+    }
+
+    /**
+     * Get screen rotation: "landscape", "portrait", "reverse_landscape", or "reverse_portrait".
+     */
+    fun getRotation(context: Context): String {
+        return loadInfo(context)?.rotation ?: "portrait"
     }
 }

@@ -2,6 +2,7 @@ package com.example.playerapp.f3
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.pm.ActivityInfo
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -183,6 +184,10 @@ class MainActivity : ComponentActivity() {
                 println("  - playlistId: ${persistedInfo.playlistId}")
                 println("  - paymentAmount: ${persistedInfo.paymentAmount}")
                 println("  - hideScreenId: ${persistedInfo.hideScreenId}")
+                println("  - rotation: ${persistedInfo.rotation}")
+                
+                // Apply rotation
+                applyAppRotation(persistedInfo.rotation)
                 
                 // Apply persisted height calibration if available
                 persistedInfo.heightCalibration?.let { calibration ->
@@ -410,6 +415,24 @@ class MainActivity : ComponentActivity() {
         return null
     }
     
+    fun applyAppRotation(rotation: String?) {
+        val rotationStr = rotation ?: "portrait"
+        val orientation = when (rotationStr.lowercase()) {
+            "landscape" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            "reverse_landscape" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+            "reverse_portrait" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+            else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+        Handler(Looper.getMainLooper()).post {
+            try {
+                requestedOrientation = orientation
+                println("DEBUG: F3 - Screen rotation requested: $rotationStr ($orientation)")
+            } catch (e: Exception) {
+                println("DEBUG: F3 - Error setting screen orientation: ${e.message}")
+            }
+        }
+    }
+
     private fun registerWithAdscape(screenId: String, deviceInfo: DeviceInfo) {
         try {
             println("DEBUG: F3 - Starting registration with screenId: $screenId")
@@ -537,6 +560,7 @@ fun F3PlayerScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? ComponentActivity
+    val mainActivity = context as? MainActivity
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val drawerWidthDp = (configuration.screenWidthDp * 0.45f).toInt()
     
@@ -1811,6 +1835,23 @@ fun F3PlayerScreen(
                 println("[SOCKET] ✅ App mode updated and persisted: $newMode")
             }
         }
+
+        // Real-time rotation change from admin panel
+        socketManager.setOnRotationChanged { newRotation ->
+            println("[ROTATION_CHANGE] Admin pushed new screen rotation: $newRotation")
+            mainActivity?.applyAppRotation(newRotation)
+            InfoStorage.updateInfo(
+                context,
+                InfoStorage.ScreenInfo(
+                    screenId = null, screenName = null, location = null,
+                    heightCalibration = null, heightCalibrationEnabled = null,
+                    playlistId = null, paymentAmount = null,
+                    flowDrawerEnabled = null, flowDrawerSlotCount = null,
+                    hideScreenId = null, appMode = null, rotation = newRotation
+                )
+            )
+            println("[ROTATION_CHANGE] Screen rotation updated and persisted: $newRotation")
+        }
     }
     
     // Fetch height calibration when registered - check if changed and update localStorage
@@ -1865,6 +1906,9 @@ fun F3PlayerScreen(
                         // Update state regardless (in case it was initialized from localStorage)
                         heightCalibration = cal
                     }
+                    // Apply synced rotation
+                    val currentRotation = InfoStorage.getRotation(context)
+                    mainActivity?.applyAppRotation(currentRotation)
                     println("DEBUG: F3 - Height calibration loaded: $cal cm")
                 } else {
                     // If fetch failed, use stored value
@@ -2119,11 +2163,13 @@ fun F3PlayerScreen(
             exit = fadeOut(animationSpec = tween(300))
         ) {
             Surface(
-                modifier = Modifier.padding(start = 8.dp, top = 8.dp),
+                modifier = Modifier
+                    .padding(start = 8.dp, top = 8.dp)
+                    .border(1.dp, Color(0xFF3F3F46), RoundedCornerShape(12.dp)),
                 shape = RoundedCornerShape(12.dp),
-                color = Color(0xCC0A0A0A),  // 80% black — opaque enough to read, not harsh
+                color = Color(0xFF1E1F22),  // Fully opaque charcoal black — avoids alpha blending banding
                 tonalElevation = 0.dp,
-                shadowElevation = 4.dp
+                shadowElevation = 0.dp
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
@@ -2164,9 +2210,11 @@ fun F3PlayerScreen(
             )
         ) {
             Surface(
-                modifier = Modifier.padding(end = 8.dp, top = 8.dp),
+                modifier = Modifier
+                    .padding(end = 8.dp, top = 8.dp)
+                    .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(20.dp)),
                 shape = RoundedCornerShape(20.dp),
-                color = Color(0xDDFF3B30)  // Red, slightly translucent
+                color = Color(0xFFE11D48)  // Solid premium red — avoids alpha blending banding
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),

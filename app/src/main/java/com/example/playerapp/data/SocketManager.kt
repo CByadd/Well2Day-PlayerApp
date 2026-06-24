@@ -41,6 +41,8 @@ class SocketManager(private val context: Context) {
     private var onAssetsUpdated: (() -> Unit)? = null
     /** Fired when the admin panel pushes a new appMode ("F1", "F2", "PlayerOnly", …) */
     private var onModeChanged: ((String) -> Unit)? = null
+    /** Fired when the admin panel pushes a new screen rotation ("landscape", "portrait", etc.) */
+    private var onRotationChanged: ((String) -> Unit)? = null
     
     /**
      * Connect to Socket.IO server and join screen room
@@ -298,6 +300,24 @@ class SocketManager(private val context: Context) {
                 }
             }
             
+            // Listen for admin-pushed rotation changes
+            socket?.on("screen-rotation-changed") { args ->
+                try {
+                    val data = args.getOrNull(0) as? JSONObject
+                    val newRotation = data?.optString("rotation")?.takeIf { it.isNotBlank() }
+                    if (newRotation != null) {
+                        println("[SOCKET] 🔄 screen-rotation-changed received: rotation=$newRotation")
+                        Handler(Looper.getMainLooper()).post {
+                            onRotationChanged?.invoke(newRotation)
+                        }
+                    } else {
+                        println("[SOCKET] ⚠️ screen-rotation-changed received but rotation field missing")
+                    }
+                } catch (e: Exception) {
+                    println("[SOCKET] ❌ Error processing screen-rotation-changed: ${e.message}")
+                }
+            }
+            
             // Handle pong for connection health
             socket?.on("pong") {
                 println("[SOCKET] 💓 Pong received - connection is alive")
@@ -426,6 +446,13 @@ class SocketManager(private val context: Context) {
      */
     fun setOnModeChanged(callback: (String) -> Unit) {
         this.onModeChanged = callback
+    }
+
+    /**
+     * Set callback for admin-pushed screen rotation changes.
+     */
+    fun setOnRotationChanged(callback: (String) -> Unit) {
+        this.onRotationChanged = callback
     }
     
     /**
