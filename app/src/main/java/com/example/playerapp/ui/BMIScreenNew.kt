@@ -32,7 +32,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.playerapp.R
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import com.example.playerapp.data.Repository
 import androidx.compose.ui.text.font.FontStyle
@@ -79,17 +81,17 @@ fun BMIScreenNew(bmiData: Map<String, Any>?) {
 
     val animatedBmi by animateFloatAsState(
         targetValue = if (startAnimation) (bmi?.toFloat() ?: 0f) else 0f,
-        animationSpec = tween(1500, easing = FastOutSlowInEasing),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessVeryLow),
         label = "bmiAnim"
     )
     val animatedWeight by animateFloatAsState(
         targetValue = if (startAnimation) (weight?.toFloat() ?: 0f) else 0f,
-        animationSpec = tween(1500, easing = FastOutSlowInEasing),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessVeryLow),
         label = "weightAnim"
     )
     val animatedHeight by animateFloatAsState(
         targetValue = if (startAnimation) (height?.toFloat() ?: 0f) else 0f,
-        animationSpec = tween(1500, easing = FastOutSlowInEasing),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessVeryLow),
         label = "heightAnim"
     )
 
