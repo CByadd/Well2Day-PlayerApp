@@ -751,16 +751,15 @@ fun ProcessingScreen() {
         verticalArrangement = Arrangement.Center,
         modifier = Modifier.fillMaxWidth().padding(16.dp)
     ) {
-        val infiniteTransition = rememberInfiniteTransition(label = "processing_spinner")
-        val rotation by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1200, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "processing_rotation"
-        )
+        var rotation by remember { mutableFloatStateOf(0f) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                androidx.compose.runtime.withFrameMillis { time ->
+                    // 1200ms per full 360 degree rotation
+                    rotation = (time % 1200) * (360f / 1200f)
+                }
+            }
+        }
         
         Box(
             modifier = Modifier
@@ -775,11 +774,12 @@ fun ProcessingScreen() {
             ) {
                 val brush = Brush.sweepGradient(
                     colors = listOf(
-                        Color(0x00E11D48), // Transparent Red
-                        Color(0xFFE11D48), // Red
-                        Color(0xFF8B5CF6), // Purple
-                        Color(0xFF3B82F6), // Blue
-                        Color(0x003B82F6)  // Transparent gap
+                        Color(0x001D4ED8), // Transparent Blue
+                        Color(0xFF1D4ED8), // Deep Blue
+                        Color(0xFF2563EB), // Royal Blue
+                        Color(0xFF3B82F6), // Bright Blue
+                        Color(0xFF60A5FA), // Light Blue
+                        Color(0x0060A5FA)  // Transparent gap
                     )
                 )
                 drawCircle(

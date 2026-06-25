@@ -63,10 +63,11 @@ fun KioskImage(
                     .background(Color.White),
                 contentAlignment = Alignment.Center
             ) {
-                androidx.compose.material3.Text(
-                    text = "No Image",
-                    color = Color.Gray,
-                    fontSize = 12.sp
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.playerapp.R.drawable.well2day_logo),
+                    contentDescription = "Default Image",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
                 )
             }
         } else {

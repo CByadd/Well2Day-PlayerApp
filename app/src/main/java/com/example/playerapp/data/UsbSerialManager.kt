@@ -184,17 +184,19 @@ class UsbSerialManager(private val context: Context) {
     fun findAndConnectDevice() {
         val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
         if (availableDrivers.isEmpty()) return
-        val driver = availableDrivers.firstOrNull() ?: return
-        val device = driver.device
-        if (usbManager.hasPermission(device)) {
-            connectToDevice(device)
-        } else {
-            val permissionIntent = PendingIntent.getBroadcast(
-                context, 0,
-                Intent(ACTION_USB_PERMISSION),
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
-            )
-            usbManager.requestPermission(device, permissionIntent)
+        
+        for (driver in availableDrivers) {
+            val device = driver.device
+            if (usbManager.hasPermission(device)) {
+                connectToDevice(device)
+            } else {
+                val permissionIntent = PendingIntent.getBroadcast(
+                    context, 0,
+                    Intent(ACTION_USB_PERMISSION),
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+                )
+                usbManager.requestPermission(device, permissionIntent)
+            }
         }
     }
 

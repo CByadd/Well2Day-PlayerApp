@@ -22,7 +22,7 @@ object AppConfig {
      * Change this URL to your default asset:
      * Current URL matches server .env configuration
      */
-    const val DEFAULT_ASSET_URL = "https://res.cloudinary.com/dh0ehlpkp/image/upload/v1773147397/Defaut-Img_bc0xax.png"
+    const val DEFAULT_ASSET_URL = "android.resource://com.example.playerapp/drawable/well2day_logo"
     
     /**
      * Default Asset Name

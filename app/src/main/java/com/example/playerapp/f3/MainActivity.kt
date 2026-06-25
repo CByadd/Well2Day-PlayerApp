@@ -1119,11 +1119,17 @@ fun F3PlayerScreen(
                 // Generate payment token to ensure payment completion
                 val paymentToken = com.example.playerapp.utils.PaymentTokenManager.generateToken(bmiId, screenId)
                 
+                // In F2 mode, ensure the save-to-cloud QR code has appVersion=f2
+                var finalWebUrl = webUrl
+                if (isF2ModeActive) {
+                    finalWebUrl = finalWebUrl.replace(Regex("appVersion=[^&#]*", RegexOption.IGNORE_CASE), "appVersion=f2")
+                }
+                
                 // Append token to webUrl
-                val tokenizedWebUrl = if (webUrl.contains("?")) {
-                    "$webUrl&paymentToken=${paymentToken}"
+                val tokenizedWebUrl = if (finalWebUrl.contains("?")) {
+                    "$finalWebUrl&paymentToken=${paymentToken}"
                 } else {
-                    "$webUrl?paymentToken=${paymentToken}"
+                    "$finalWebUrl?paymentToken=${paymentToken}"
                 }
                 
                 // Update BMI data map with server response (webUrl with token and bmiId)
@@ -2086,7 +2092,7 @@ fun F3PlayerScreen(
     // internal increment-counter and setOnSensorStable callback for instant, delay-free progression.)
     
     // Monitor flow activity and sensor inactivity to terminate stale flows
-    LaunchedEffect(isFlowActive, lastReadingTime, lowWeightDetectedAt) {
+    LaunchedEffect(isFlowActive, lowWeightDetectedAt) {
         if (isFlowActive) {
             while (isFlowActive) {
                 kotlinx.coroutines.delay(200) // Faster polling for immediate termination
@@ -2111,11 +2117,11 @@ fun F3PlayerScreen(
                     }
                 }
                 
-                // Case 3: Absolute flow timeout (Safety fallback - no flow should last > 10 minutes)
+                // Case 3: Absolute flow timeout (Safety fallback - no flow should last > 3 minutes)
                 val startTime = flowStartTime ?: 0L
-                if (startTime > 0 && (now - startTime) > 600000L) { // 10 minutes
-                    println("DEBUG: F3 - Stale flow detected: Maximum flow duration (10m) exceeded")
-                    resetPaymentFlow("Absolute timeout")
+                if (startTime > 0 && (now - startTime) > 180000L) { // 3 minutes
+                    println("DEBUG: F3 - Stale flow detected: Maximum flow duration (3m) exceeded")
+                    resetPaymentFlow("Absolute timeout (3m)")
                     break
                 }
             }

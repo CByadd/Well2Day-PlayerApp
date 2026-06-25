@@ -320,6 +320,22 @@ fun PlayerScreen(screenId: String, enableBMIFunctionality: Boolean = true, refre
         }
     }
     
+    // Refresh app if stuck on checking status or loading for more than 3 minutes
+    LaunchedEffect(checkingStatus, loading) {
+        if (checkingStatus || loading) {
+            kotlinx.coroutines.delay(180_000L) // 3 minutes
+            println("DEBUG: PlayerScreen - Stuck on checking status/loading for 3 minutes. Refreshing app...")
+            val pm = context.packageManager
+            val intent = pm.getLaunchIntentForPackage(context.packageName)
+            if (intent != null) {
+                val componentName = intent.component
+                val restartIntent = android.content.Intent.makeRestartActivityTask(componentName)
+                context.startActivity(restartIntent)
+                Runtime.getRuntime().exit(0)
+            }
+        }
+    }
+    
     // UI Root
     Box(
         modifier = Modifier.fillMaxSize().background(Color.Black),
