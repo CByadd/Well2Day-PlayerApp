@@ -2233,6 +2233,10 @@ fun F3PlayerScreen(
                     paymentFlowState = PaymentFlowState.FORTUNE_SHOWING
                     showTroubleshootMenu = false
                 },
+                onShowProcessing = {
+                    paymentFlowState = PaymentFlowState.DETECTING
+                    showTroubleshootMenu = false
+                },
                 isInternetConnected = !isOffline,
                 isUsbConnected = UsbSerialManager(context).isConnected(), // Will create a quick instance or just check
                 appMode = appMode,

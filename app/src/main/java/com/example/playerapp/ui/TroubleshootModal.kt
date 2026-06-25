@@ -20,6 +20,7 @@ fun TroubleshootModal(
     onDismiss: () -> Unit,
     onShowBMI: () -> Unit,
     onShowFortune: () -> Unit,
+    onShowProcessing: () -> Unit,
     isInternetConnected: Boolean,
     isUsbConnected: Boolean,
     appMode: String,
@@ -77,16 +78,26 @@ fun TroubleshootModal(
                     Button(
                         onClick = onShowBMI,
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F766E)),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                     ) {
-                        Text("Show BMI")
+                        Text("BMI", fontSize = 12.sp)
+                    }
+                    Button(
+                        onClick = onShowProcessing,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+                    ) {
+                        Text("Process", fontSize = 12.sp)
                     }
                     Button(
                         onClick = onShowFortune,
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F4C5C))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F4C5C)),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                     ) {
-                        Text("Show Fortune")
+                        Text("Fortune", fontSize = 12.sp)
                     }
                 }
 

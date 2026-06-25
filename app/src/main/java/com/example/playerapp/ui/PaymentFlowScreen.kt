@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -220,15 +221,25 @@ private fun ProcessingGateModal(
             ) {
                 Card(
                     modifier = Modifier
-                        .size(420.dp)
-                        .aspectRatio(1f)
-                        .padding(32.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
+                        .fillMaxWidth(0.85f)
+                        .padding(horizontal = if (drawerOffset > 0) 32.dp else 16.dp, vertical = 32.dp)
+                        .wrapContentHeight(),
+                    shape = RoundedCornerShape(32.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 24.dp)
                 ) {
                     Box(
-                        modifier = Modifier.padding(24.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(
+                                        Color(0xFFFFFFFF),
+                                        Color(0xFFF1F5F9)
+                                    )
+                                )
+                            )
+                            .padding(horizontal = 24.dp, vertical = 48.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         ProcessingScreen() // Reuses the animated loading composable from BMIModal

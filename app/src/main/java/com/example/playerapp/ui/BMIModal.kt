@@ -30,6 +30,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.ui.draw.alpha
+import com.airbnb.lottie.compose.LottieAnimation
+import com.airbnb.lottie.compose.LottieCompositionSpec
+import com.airbnb.lottie.compose.LottieConstants
+import com.airbnb.lottie.compose.rememberLottieComposition
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -265,7 +269,7 @@ fun BMIModal(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Transparent)
+                .background(Color.Black.copy(alpha = 0.6f))
                 .alpha(modalAlpha),
             horizontalArrangement = if (drawerOffset > 0) Arrangement.Start else Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
@@ -276,9 +280,14 @@ fun BMIModal(
             val isQRScreen = currentScreen == F1Screen.QR
             // Calculate available width: screen width minus drawer width (300dp)
             val availableWidth = if (drawerOffset > 0) {
-                screenWidthDp - drawerOffset.dp
+                // Reduce size slightly more and account for margins
+                (screenWidthDp - drawerOffset.dp) - 48.dp
             } else {
                 if (isQRScreen) 540.dp else 480.dp
+            }
+            
+            if (drawerOffset > 0) {
+                Spacer(modifier = Modifier.width(24.dp))
             }
             
             Card(
@@ -430,7 +439,11 @@ fun BMIModal(
                                 }
                                 F1Screen.FORTUNE -> {
                                     println("DEBUG: BMIModal - [RENDER] ✅ Rendering FORTUNE screen")
-                                    FortuneScreen(bmiData)
+                                    RedesignedFortuneScreen(
+                                        bmiData = bmiData,
+                                        flowType = "F1",
+                                        availableWidth = availableWidth
+                                    )
                                 }
                             }
                         }
@@ -731,11 +744,38 @@ fun BMIScreen(bmiData: Map<String, Any>?) {
 
 @Composable
 fun ProcessingScreen() {
-    // Processing animation: always shows for 5 seconds (managed by caller)
-    LoadingModal(
-        label = "Processing Your Measurements",
-        imageResId = R.drawable.measureloadimg
-    )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxWidth().padding(16.dp)
+    ) {
+        val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.processing_animation))
+        
+        LottieAnimation(
+            composition = composition,
+            iterations = LottieConstants.IterateForever,
+            modifier = Modifier
+                .size(240.dp)
+                .padding(bottom = 24.dp)
+        )
+        
+        Text(
+            text = "Processing Your Screen",
+            fontSize = 28.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF1F2937),
+            textAlign = TextAlign.Center
+        )
+        
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        Text(
+            text = "Please stay still while we analyze your results.",
+            fontSize = 18.sp,
+            color = Color(0xFF6B7280),
+            textAlign = TextAlign.Center
+        )
+    }
 }
 
 @Composable

@@ -57,12 +57,12 @@ class UsbSerialManager(private val context: Context) {
 
         /**
          * Number of consecutive identical-weight frames required before
-         * [onSensorStable] is fired.  Mirrors `increment > 10` in reference.
+         * [onSensorStable] is fired. Set to 0 for instant detection (fires on 1st match).
          */
-        private const val STABLE_THRESHOLD = 10
+        private const val STABLE_THRESHOLD = 0
 
         /** Height readings are collected during frames [HEIGHT_COLLECT_START]+1 to [STABLE_THRESHOLD]. */
-        private const val HEIGHT_COLLECT_START = 5
+        private const val HEIGHT_COLLECT_START = 0
 
         /** Weights at or below this value are treated as "nobody on scale". */
         private const val ZERO_WEIGHT_THRESHOLD = 0.5f
