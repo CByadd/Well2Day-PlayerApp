@@ -35,6 +35,8 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import com.example.playerapp.data.Repository
+import androidx.compose.ui.text.font.FontStyle
+
 
 val InterFontFamily = FontFamily(
     Font(R.font.inter_regular, FontWeight.Normal),
@@ -501,8 +503,8 @@ fun WaterIntakeCard(waterRecommendation: Triple<String, Int, Int>?) {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
                             text = "${waterRecommendation?.first ?: "--"}",
-                            fontFamily = ManropeFontFamily,
-                            fontSize = 12.sp, // Smaller font
+                            fontFamily = LexendFontFamily,
+                            fontSize = 14.sp, // Smaller font
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1E293B)
                         )
@@ -512,7 +514,7 @@ fun WaterIntakeCard(waterRecommendation: Triple<String, Int, Int>?) {
                             fontSize = 12.sp, // Smaller unit font
                             fontWeight = FontWeight.SemiBold,
                             color = Color(0xFF1E293B),
-                            modifier = Modifier.padding(bottom = 2.dp)
+                           
                         )
                     }
                     Spacer(modifier = Modifier.height(2.dp))
@@ -604,7 +606,7 @@ fun IdealRangeCard(idealWeightRange: Pair<String, String>?, heightStr: String?) 
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
                             text = "${idealWeightRange?.first ?: "--"}–${idealWeightRange?.second ?: "--"}",
-                            fontFamily = ManropeFontFamily,
+                            fontFamily = LexendFontFamily,
                             fontSize = 14.sp, // Smaller font
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1E293B)
@@ -615,7 +617,7 @@ fun IdealRangeCard(idealWeightRange: Pair<String, String>?, heightStr: String?) 
                             fontSize = 12.sp, // Smaller unit font
                             fontWeight = FontWeight.SemiBold,
                             color = Color(0xFF1E293B),
-                            modifier = Modifier.padding(bottom = 2.dp)
+
                         )
                     }
                     Spacer(modifier = Modifier.height(2.dp))
@@ -686,11 +688,12 @@ fun WellnessTipCard(tipText: String) {
                 )
                 
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 Text(
                     text = tipText,
                     fontFamily = InterFontFamily,
                     fontSize = 15.sp,
+                    fontStyle = FontStyle.Italic,
                     color = Color.White.copy(alpha = 0.9f),
                     lineHeight = 22.sp,
                     modifier = Modifier.fillMaxWidth(0.85f)
