@@ -137,6 +137,7 @@ fun PaymentFlowScreen(
                         BMIDataModal(
                             isVisible = true,
                             bmiData = currentBmiData,
+                            flowType = flowType,
                             onDismiss = onDismiss,
                             drawerOffset = drawerOffset,
                             allowDismissOnOverlay = allowDismissOnOverlay
@@ -167,6 +168,7 @@ fun PaymentFlowScreen(
                         BMIDataModal(
                             isVisible = true,
                             bmiData = currentBmiData,
+                            flowType = flowType,
                             onDismiss = onDismiss,
                             drawerOffset = drawerOffset,
                             allowDismissOnOverlay = allowDismissOnOverlay

@@ -187,7 +187,7 @@ fun BMIModal(
     // State Machine: Payment Flow - BMI → Fortune (after 12 seconds on BMI)
     // Extended from 8s to 12s as per requirements
     LaunchedEffect(currentScreen, bmiShownTime, flowType, isVisible, forceScreen) {
-        if (!isVisible || flowType != "F1") return@LaunchedEffect
+        if (!isVisible || (flowType != "F1" && flowType != "F2")) return@LaunchedEffect
         
         // Payment flow: BMI screen shown → wait 12 seconds → Fortune screen
         if (currentScreen == F1Screen.BMI && bmiShownTime != null) {
@@ -443,14 +443,23 @@ fun BMIModal(
 
 
 @Composable
-fun QRCodeScreen(bmiData: Map<String, Any>?) {
-    val steps = remember {
-        listOf(
-            "Scan the QR code using your phone",
-            "Sign in to your Well2Day account",
-            "Make a quick and secure payment",
-            "Access your BMI insights and track progress"
-        )
+fun QRCodeScreen(bmiData: Map<String, Any>?, isSaveCloudOnly: Boolean = false) {
+    val steps = remember(isSaveCloudOnly) {
+        if (isSaveCloudOnly) {
+            listOf(
+                "Scan the QR code using your phone",
+                "Log in or sign up to your account",
+                "Save your measurements to the cloud",
+                "Track your history and progress easily"
+            )
+        } else {
+            listOf(
+                "Scan the QR code using your phone",
+                "Sign in to your Well2Day account",
+                "Make a quick and secure payment",
+                "Access your BMI insights and track progress"
+            )
+        }
     }
     val webUrl: String? = remember(bmiData) {
         bmiData?.get("webUrl") as? String
@@ -532,7 +541,7 @@ fun QRCodeScreen(bmiData: Map<String, Any>?) {
         Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = "Scan To Continue",
+            text = if (isSaveCloudOnly) "Save to Cloud" else "Scan To Continue",
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF1F2937),
@@ -542,7 +551,7 @@ fun QRCodeScreen(bmiData: Map<String, Any>?) {
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "Secure payment and instant access to your Well2Day results",
+            text = if (isSaveCloudOnly) "Scan the QR code to save your results to the cloud" else "Secure payment and instant access to your Well2Day results",
             fontSize = 14.sp,
             color = Color(0xFF6B7280),
             textAlign = TextAlign.Center,

@@ -651,7 +651,7 @@ fun F3PlayerScreen(
     }
     var showConfigError by remember { mutableStateOf(false) }
     var configErrorTriggered by remember { mutableStateOf(false) }
-    var showOfflineTriggerToast by remember { mutableStateOf(false) }
+    var bottomToastMessage by remember { mutableStateOf<String?>(null) }
     
     // Flow drawer enabled state - initialize from persisted info
     var flowDrawerEnabled by remember {
@@ -674,6 +674,7 @@ fun F3PlayerScreen(
     }
     // Derive whether the full F1 BMI flow is enabled from the mode
     val isF1ModeActive = appMode.equals("F1", ignoreCase = true)
+    val isF2ModeActive = appMode.equals("F2", ignoreCase = true)
     
     // Track current BMI modal screen for drawer visibility
     var currentBMIScreen by remember { mutableStateOf<F1Screen?>(null) }
@@ -689,6 +690,7 @@ fun F3PlayerScreen(
     }
     var assetRefreshTrigger by remember { mutableStateOf(0) }
     var isPlaylistUpdating by remember { mutableStateOf(false) }
+    var updatingText by remember { mutableStateOf("Playlist is updating...") }
     var lastFlowDrawerDemandState by remember { mutableStateOf<String?>(null) }
     
     // Flow Drawer visibility calculation - placed after all variables are declared
@@ -730,7 +732,7 @@ fun F3PlayerScreen(
     LaunchedEffect(Unit) {
         isOnlineFlow.collect { online ->
             println("DEBUG: F3 - Network connectivity change: ${if (online) "Online" else "Offline"}")
-            if (online && showOfflineTriggerToast) showOfflineTriggerToast = false
+            if (online && bottomToastMessage == "Device is offline Cant process BMI") bottomToastMessage = null
         }
     }
     
@@ -932,7 +934,7 @@ fun F3PlayerScreen(
     // Function to process first valid BMI reading
     fun processFirstValidReading(weight: Float, height: Float) {
         if (isFlowActive) return // Already processed
-        showOfflineTriggerToast = false
+        bottomToastMessage = null
         val activeFlowSessionId = flowSessionId + 1
         flowSessionId = activeFlowSessionId
         
@@ -1060,10 +1062,17 @@ fun F3PlayerScreen(
 
         // Show QR modal IMMEDIATELY with initial data (webUrl will be added when server responds)
         // Set state synchronously to ensure instant display
-        println("[PAYMENT_FLOW] ⚡ USB data received - Showing QR modal IMMEDIATELY")
-        bmiData = initialBmiDataMap
-        paymentFlowState = PaymentFlowState.QR_SHOWING
-        isDetectingBMI = false
+        if (isF2ModeActive) {
+            println("[PAYMENT_FLOW] ⚡ USB data received - F2 mode active - Proceeding directly to BMI_SHOWING")
+            bmiData = initialBmiDataMap
+            paymentFlowState = PaymentFlowState.BMI_SHOWING
+            isDetectingBMI = false
+        } else {
+            println("[PAYMENT_FLOW] ⚡ USB data received - Showing QR modal IMMEDIATELY")
+            bmiData = initialBmiDataMap
+            paymentFlowState = PaymentFlowState.QR_SHOWING
+            isDetectingBMI = false
+        }
         println("[PAYMENT_FLOW] ✅ QR modal state set - Modal should be visible now")
         
         // Start timeout for QR code generation - if server doesn't respond in 60 seconds, show placeholder
@@ -1774,8 +1783,13 @@ fun F3PlayerScreen(
             }
         }
 
-        socketManager.setOnAssetsUpdated {
-            println("DEBUG: F3 - Assets updated event received, refreshing FlowDrawer assets")
+        socketManager.setOnAssetsUpdated { eventType ->
+            println("DEBUG: F3 - Assets updated event received ($eventType), refreshing FlowDrawer assets")
+            updatingText = when (eventType) {
+                "screen-config-changed" -> "Updating screen settings..."
+                "flow-drawer-images-updated" -> "Updating flow images..."
+                else -> "Playlist is updating..."
+            }
             isPlaylistUpdating = true
             val activeScreenId = screenId
             if (!activeScreenId.isNullOrBlank()) {
@@ -1933,23 +1947,29 @@ fun F3PlayerScreen(
         println("DEBUG: F3 - Flow type set to $resolvedFlowType (appMode=$appMode)")
     }
     
-    // Setup USB Serial Manager for F3 — only when in F1 mode
-    LaunchedEffect(isF1ModeActive) {
-        if (!isF1ModeActive) {
-            println("DEBUG: F3 - Non-F1 mode ($appMode), skipping USB sensor setup")
-            return@LaunchedEffect
-        }
+    // Setup USB Serial Manager for F3 — when F1, F2 or PlayerOnly modes are active
+    LaunchedEffect(isF1ModeActive, isF2ModeActive) {
         // Add sensor data callback - uses stability tracker
         usbSerialManager.setOnSensorDataReceived { weight, height ->
+            // If the app is in PlayerOnly mode, show the toast if weight >= 3.0f
+            if (!isF1ModeActive && !isF2ModeActive) {
+                if (weight >= 3.0f) {
+                    bottomToastMessage = "it is only An Player App"
+                } else {
+                    bottomToastMessage = null
+                }
+                return@setOnSensorDataReceived
+            }
+
             // If BMI is triggered while offline, show a lightweight toast instead of blocking overlays.
             if (isOffline && !isFlowActive) {
                 if (weight >= 3.0f) {
-                    if (!showOfflineTriggerToast) {
+                    if (bottomToastMessage == null) {
                         println("DEBUG: F3 - Offline trigger detected, showing bottom toast")
                     }
-                    showOfflineTriggerToast = true
-                } else if (showOfflineTriggerToast) {
-                    showOfflineTriggerToast = false
+                    bottomToastMessage = "Device is offline Cant process BMI"
+                } else if (bottomToastMessage != null) {
+                    bottomToastMessage = null
                 }
                 println("DEBUG: F3 - Device offline, ignoring sensor input for BMI flow")
                 return@setOnSensorDataReceived
@@ -1974,12 +1994,8 @@ fun F3PlayerScreen(
                 println("DEBUG: F3 - Weight reading: $weight kg")
             }
             
-            // Flow type is always F1 in this app - no need to check
-            // Only process if flow type is F1 (which is always true)
-            if (currentFlowType == "F1") {
-                // If flow is active (BMI data captured), monitor weight to terminate only if weight < 5kg
-                // Only monitor weight termination when flow is actually active (BMI data captured)
-                // Don't block when modal is just showing - allow payment data to update modal state
+            if (currentFlowType == "F1" || currentFlowType == "F2") {
+                // If flow is active (BMI data captured), monitor weight to terminate only if weight < 3kg
                 if (isFlowActive) {
                     // Flow is active - check if weight has dropped below 3.0kg (user stepped out)
                     val weightDropped = weight < 3.0f
@@ -2034,13 +2050,12 @@ fun F3PlayerScreen(
                     // Hide loading if weight drops back down while trying to detect
                     if (isDetectingBMI && !isFlowActive) {
                         isDetectingBMI = false
-                        showOfflineTriggerToast = false
+                        bottomToastMessage = null
                         println("DEBUG: F3 - User stepped off before stabilization, detection aborted.")
                     }
                 }
             } else {
-                // Flow type is always F1 in this app - this branch should never be reached
-                println("DEBUG: F3 - Flow type is not F1 (should never happen - flow type is hardcoded to F1)")
+                println("DEBUG: F3 - Flow type is $currentFlowType, skipping BMI detection logic")
             }
         }
         
@@ -2271,7 +2286,7 @@ fun F3PlayerScreen(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = "Playlist is updating...",
+                    text = updatingText,
                     color = Color.White,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium
@@ -2771,9 +2786,9 @@ fun F3PlayerScreen(
         }
     }
     
-    // Show F1 BMI/payment modals only when the admin-controlled appMode is F1
-    val shouldShowModals = isF1ModeActive || forcedScreen != null
-    val effectiveFlowType = if (isF1ModeActive) "F1" else appMode
+    // Show F1 BMI/payment modals only when the admin-controlled appMode is F1 or F2
+    val shouldShowModals = isF1ModeActive || isF2ModeActive || forcedScreen != null
+    val effectiveFlowType = if (isF1ModeActive) "F1" else if (isF2ModeActive) "F2" else appMode
     
     if (shouldShowModals) {
         println("DEBUG: F3 - [MODAL] ═══════════════════════════════════════")
@@ -2797,7 +2812,7 @@ fun F3PlayerScreen(
         }
         
         // BMI Detection Loading Overlay - shown when detection starts, hidden when modal shows
-        if (isDetectingBMI && paymentFlowState == PaymentFlowState.IDLE && currentFlowType == "F1") {
+        if (isDetectingBMI && paymentFlowState == PaymentFlowState.IDLE && (currentFlowType == "F1" || currentFlowType == "F2")) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -2960,7 +2975,7 @@ fun F3PlayerScreen(
     }
     
     androidx.compose.animation.AnimatedVisibility(
-        visible = showOfflineTriggerToast,
+        visible = bottomToastMessage != null,
         modifier = Modifier
             .fillMaxSize()
             .padding(bottom = 77.dp),
@@ -2978,7 +2993,7 @@ fun F3PlayerScreen(
                 shadowElevation = 8.dp
             ) {
                 Text(
-                    text = "Device is offline Cant process BMI",
+                    text = bottomToastMessage ?: "",
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                     color = Color(0xFF111827),
                     fontSize = 14.sp,

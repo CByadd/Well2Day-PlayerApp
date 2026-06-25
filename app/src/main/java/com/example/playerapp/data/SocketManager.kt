@@ -38,7 +38,7 @@ class SocketManager(private val context: Context) {
     // Callbacks
     private var onPaymentSuccess: ((Map<String, Any>) -> Unit)? = null
     private var onFortuneReady: ((Map<String, Any>) -> Unit)? = null
-    private var onAssetsUpdated: (() -> Unit)? = null
+    private var onAssetsUpdated: ((String) -> Unit)? = null
     /** Fired when the admin panel pushes a new appMode ("F1", "F2", "PlayerOnly", …) */
     private var onModeChanged: ((String) -> Unit)? = null
     /** Fired when the admin panel pushes a new screen rotation ("landscape", "portrait", etc.) */
@@ -410,7 +410,7 @@ class SocketManager(private val context: Context) {
                 println("[SOCKET] Data: $data")
                 println("═══════════════════════════════════════════════════════════════")
                 Log.d(TAG, "Received $eventName event: $data")
-                notifyAssetsUpdated()
+                notifyAssetsUpdated(eventName)
             } catch (e: Exception) {
                 println("[SOCKET] ❌ Error processing $eventName event: ${e.message}")
             }
@@ -436,7 +436,7 @@ class SocketManager(private val context: Context) {
     /**
      * Set callback for real-time asset updates
      */
-    fun setOnAssetsUpdated(callback: () -> Unit) {
+     fun setOnAssetsUpdated(callback: (String) -> Unit) {
         this.onAssetsUpdated = callback
     }
 
@@ -471,9 +471,9 @@ class SocketManager(private val context: Context) {
     /**
      * Disconnect from socket server
      */
-    private fun notifyAssetsUpdated() {
+     private fun notifyAssetsUpdated(eventName: String) {
         Handler(Looper.getMainLooper()).post {
-            onAssetsUpdated?.invoke()
+            onAssetsUpdated?.invoke(eventName)
         }
     }
 
