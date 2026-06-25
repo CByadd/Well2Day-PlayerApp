@@ -1862,6 +1862,25 @@ fun F3PlayerScreen(
             }
         }
 
+        // Real-time hideScreenId change from admin panel
+        socketManager.setOnHideScreenIdChanged { newHideStatus ->
+            println("[SOCKET] 🔄 Admin pushed new hideScreenId: $newHideStatus")
+            if (newHideStatus != hideScreenId) {
+                hideScreenId = newHideStatus
+                // Persist immediately so it survives app restarts
+                InfoStorage.updateInfo(
+                    context,
+                    InfoStorage.ScreenInfo(
+                        screenId = null, screenName = null, location = null,
+                        heightCalibration = null, heightCalibrationEnabled = null,
+                        playlistId = null, paymentAmount = null,
+                        flowDrawerEnabled = null, flowDrawerSlotCount = null,
+                        hideScreenId = newHideStatus, appMode = null
+                    )
+                )
+            }
+        }
+
         // Real-time rotation change from admin panel
         socketManager.setOnRotationChanged { newRotation ->
             println("[ROTATION_CHANGE] Admin pushed new screen rotation: $newRotation")
@@ -2164,11 +2183,15 @@ fun F3PlayerScreen(
         }
     }
     
-    // Main player screen (BMI functionality disabled - handled by F3PlayerScreen)
     Box(modifier = Modifier
         .fillMaxSize()
         .padding(10.dp)) {
-        PlayerScreen(screenId = screenId, enableBMIFunctionality = false, refreshTrigger = assetRefreshTrigger)
+        PlayerScreen(
+            screenId = screenId, 
+            enableBMIFunctionality = false, 
+            refreshTrigger = assetRefreshTrigger,
+            hideScreenId = hideScreenId
+        )
         
         // ── Screen ID badge (top-left) — Material3 styled ──────────────────
         var showTroubleshootMenu by remember { mutableStateOf(false) }

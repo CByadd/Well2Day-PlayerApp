@@ -42,9 +42,13 @@ import com.example.playerapp.playback.PlaybackController
 import com.example.playerapp.playback.PreloadManager
 
 @Composable
-fun PlayerScreen(screenId: String, enableBMIFunctionality: Boolean = true, refreshTrigger: Int = 0) {
+fun PlayerScreen(
+    screenId: String,
+    enableBMIFunctionality: Boolean = true,
+    refreshTrigger: Int = 0,
+    hideScreenId: Boolean = false
+) {
     val context = LocalContext.current
-    val hideScreenId = InfoStorage.getHideScreenId(context) ?: false
     // Network state — reactive so the offline label updates as soon as connectivity changes
     val isOnlineFlow = remember { observeNetworkState(context) }
     var online by remember { mutableStateOf(isOnline(context)) }

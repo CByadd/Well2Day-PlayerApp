@@ -43,6 +43,8 @@ class SocketManager(private val context: Context) {
     private var onModeChanged: ((String) -> Unit)? = null
     /** Fired when the admin panel pushes a new screen rotation ("landscape", "portrait", etc.) */
     private var onRotationChanged: ((String) -> Unit)? = null
+    /** Fired when the admin panel pushes a new hideScreenId setting */
+    private var onHideScreenIdChanged: ((Boolean) -> Unit)? = null
     
     /**
      * Connect to Socket.IO server and join screen room
@@ -300,6 +302,22 @@ class SocketManager(private val context: Context) {
                 }
             }
             
+            // Listen for admin-pushed hide screen ID changes
+            socket?.on("hide-screen-id-changed") { args ->
+                try {
+                    val data = args.getOrNull(0) as? JSONObject
+                    if (data != null && data.has("hideScreenId")) {
+                        val newHideStatus = data.getBoolean("hideScreenId")
+                        println("[SOCKET] 🔄 hide-screen-id-changed received: hideScreenId=$newHideStatus")
+                        Handler(Looper.getMainLooper()).post {
+                            onHideScreenIdChanged?.invoke(newHideStatus)
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("[SOCKET] ❌ Error processing hide-screen-id-changed: ${e.message}")
+                }
+            }
+            
             // Listen for admin-pushed rotation changes
             socket?.on("screen-rotation-changed") { args ->
                 try {
@@ -453,6 +471,13 @@ class SocketManager(private val context: Context) {
      */
     fun setOnRotationChanged(callback: (String) -> Unit) {
         this.onRotationChanged = callback
+    }
+    
+    /**
+     * Set callback for admin-pushed hide screen ID changes.
+     */
+    fun setOnHideScreenIdChanged(callback: (Boolean) -> Unit) {
+        this.onHideScreenIdChanged = callback
     }
     
     /**
