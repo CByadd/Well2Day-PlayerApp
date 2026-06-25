@@ -1,7 +1,7 @@
 package com.example.playerapp
 
 import com.example.playerapp.data.Asset
-import com.example.playerapp.data.AssetType
+import com.example.playerapp.playback.AssetType
 import com.example.playerapp.data.DefaultAsset
 import com.example.playerapp.data.Repository
 import org.junit.Test
