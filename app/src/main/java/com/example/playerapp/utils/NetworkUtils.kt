@@ -22,8 +22,7 @@ fun isOnline(context: Context): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val network = cm.activeNetwork ?: return false
             val capabilities = cm.getNetworkCapabilities(network) ?: return false
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         } else {
             @Suppress("DEPRECATION")
             val networkInfo = cm.activeNetworkInfo
@@ -57,9 +56,8 @@ fun observeNetworkState(context: Context): Flow<Boolean> = callbackFlow {
             network: Network,
             networkCapabilities: NetworkCapabilities
         ) {
-            val validated = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             val internet  = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            trySend(validated && internet)
+            trySend(internet)
         }
 
         override fun onLost(network: Network) {

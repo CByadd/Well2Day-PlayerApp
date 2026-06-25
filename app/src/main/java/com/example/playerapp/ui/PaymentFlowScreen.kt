@@ -21,6 +21,7 @@ import androidx.compose.ui.window.DialogProperties
  */
 enum class PaymentFlowState {
     IDLE,
+    DETECTING, // Instant processing screen when user steps on scale
     QR_SHOWING,
     BMI_SHOWING,
     FORTUNE_SHOWING
@@ -60,12 +61,9 @@ fun PaymentFlowScreen(
 
     LaunchedEffect(paymentFlowState) {
         if (paymentFlowState == PaymentFlowState.BMI_SHOWING && forcedScreen == null) {
-            processingComplete = false
-            println("[PAYMENT_FLOW_SCREEN] ⏳ Payment confirmed — showing 5-second processing animation")
-            kotlinx.coroutines.delay(5000L) // 5-second processing delay
+            // Processing delay removed as requested - instantly show results
             processingComplete = true
             onProcessingComplete()
-            println("[PAYMENT_FLOW_SCREEN] ✅ Processing animation complete — showing BMI results")
         } else {
             // For dev-forced screens or other states, no delay needed
             processingComplete = true
@@ -129,7 +127,8 @@ fun PaymentFlowScreen(
                         println("[PAYMENT_FLOW_SCREEN] 🎨 RENDERING PROCESSING ANIMATION (5s gate)")
                         ProcessingGateModal(
                             onDismiss = onDismiss,
-                            allowDismissOnOverlay = allowDismissOnOverlay
+                            allowDismissOnOverlay = allowDismissOnOverlay,
+                            drawerOffset = 0
                         )
                     } else {
                         // ── BMI results ──
@@ -158,6 +157,7 @@ fun PaymentFlowScreen(
                         FortuneModal(
                             isVisible = true,
                             bmiData = currentBmiData,
+                            flowType = flowType,
                             onDismiss = onDismiss,
                             drawerOffset = drawerOffset,
                             allowDismissOnOverlay = allowDismissOnOverlay
@@ -179,6 +179,16 @@ fun PaymentFlowScreen(
                 }
             }
 
+            PaymentFlowState.DETECTING -> {
+                // ── Processing animation instantly shown when weight > 3.0kg ──
+                println("[PAYMENT_FLOW_SCREEN] 🎨 RENDERING PROCESSING (DETECTING STATE)")
+                ProcessingGateModal(
+                    onDismiss = onDismiss,
+                    allowDismissOnOverlay = allowDismissOnOverlay,
+                    drawerOffset = drawerOffset
+                )
+            }
+
             PaymentFlowState.IDLE -> {
                 // Nothing to show
                 println("[PAYMENT_FLOW_SCREEN] 🎨 State is IDLE — no modal")
@@ -194,7 +204,8 @@ fun PaymentFlowScreen(
 @Composable
 private fun ProcessingGateModal(
     onDismiss: () -> Unit,
-    allowDismissOnOverlay: Boolean
+    allowDismissOnOverlay: Boolean,
+    drawerOffset: Int = 0
 ) {
     Dialog(
         onDismissRequest = { if (allowDismissOnOverlay) onDismiss() },
@@ -208,23 +219,28 @@ private fun ProcessingGateModal(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f)),
-            contentAlignment = Alignment.Center
+                .background(Color.Black.copy(alpha = 0.65f))
         ) {
-            Card(
-                modifier = Modifier
-                    .size(420.dp)
-                    .aspectRatio(1f)
-                    .padding(32.dp),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = if (drawerOffset > 0) Arrangement.Start else Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier.padding(24.dp),
-                    contentAlignment = Alignment.Center
+                Card(
+                    modifier = Modifier
+                        .size(420.dp)
+                        .aspectRatio(1f)
+                        .padding(32.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
                 ) {
-                    ProcessingScreen() // Reuses the animated loading composable from BMIModal
+                    Box(
+                        modifier = Modifier.padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ProcessingScreen() // Reuses the animated loading composable from BMIModal
+                    }
                 }
             }
         }

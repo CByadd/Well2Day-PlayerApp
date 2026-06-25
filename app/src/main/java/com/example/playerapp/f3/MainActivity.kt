@@ -38,6 +38,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import coil.ImageLoader
@@ -102,6 +105,8 @@ import com.example.playerapp.utils.observeNetworkState
 import java.io.File
 import com.example.playerapp.utils.getOrCreateMachineId
 import com.example.playerapp.utils.FlowTypeStorage
+import com.example.playerapp.ui.TroubleshootModal
+import com.example.playerapp.data.UsbSerialManager
 import com.example.playerapp.utils.HeightCalibrationStorage
 import com.example.playerapp.utils.LogoVisibilityStorage
 import com.example.playerapp.utils.InfoStorage
@@ -1066,6 +1071,7 @@ fun F3PlayerScreen(
             println("[PAYMENT_FLOW] ⚡ USB data received - F2 mode active - Proceeding directly to BMI_SHOWING")
             bmiData = initialBmiDataMap
             paymentFlowState = PaymentFlowState.BMI_SHOWING
+            currentBMIScreen = F1Screen.PROCESSING
             isDetectingBMI = false
         } else {
             println("[PAYMENT_FLOW] ⚡ USB data received - Showing QR modal IMMEDIATELY")
@@ -1949,7 +1955,15 @@ fun F3PlayerScreen(
     
     // Setup USB Serial Manager for F3 — when F1, F2 or PlayerOnly modes are active
     LaunchedEffect(isF1ModeActive, isF2ModeActive) {
-        // Add sensor data callback - uses stability tracker
+        // Add sensor stable callback - triggers instantly when UsbSerialManager locks in a value (10 matching readings)
+        usbSerialManager.setOnSensorStable { weight, height ->
+            if (isDetectingBMI && !isFlowActive && weight >= 3.0f) {
+                println("DEBUG: F3 - 🎯 Sensor stable lock acquired (weight=${weight}kg), capturing BMI instantly...")
+                processFirstValidReading(weight, height)
+            }
+        }
+
+        // Add sensor data callback - for real-time monitoring and instant feedback UI
         usbSerialManager.setOnSensorDataReceived { weight, height ->
             // If the app is in PlayerOnly mode, show the toast if weight >= 3.0f
             if (!isF1ModeActive && !isF2ModeActive) {
@@ -2044,12 +2058,16 @@ fun F3PlayerScreen(
                     // Show loading indicator when detection starts (before modal shows)
                     if (!isDetectingBMI && !isFlowActive && paymentFlowState == PaymentFlowState.IDLE) {
                         isDetectingBMI = true
-                        println("DEBUG: F3 - ⚡ DETECTION STARTED: Valid reading detected (weight=$weight kg), holding for stability...")
+                        paymentFlowState = PaymentFlowState.DETECTING // INSTANT FEEDBACK
+                        println("DEBUG: F3 - ⚡ DETECTION STARTED: Valid reading detected (weight=$weight kg), showing instant processing UI...")
                     }
                 } else {
                     // Hide loading if weight drops back down while trying to detect
                     if (isDetectingBMI && !isFlowActive) {
                         isDetectingBMI = false
+                        if (paymentFlowState == PaymentFlowState.DETECTING) {
+                            paymentFlowState = PaymentFlowState.IDLE
+                        }
                         bottomToastMessage = null
                         println("DEBUG: F3 - User stepped off before stabilization, detection aborted.")
                     }
@@ -2064,27 +2082,8 @@ fun F3PlayerScreen(
         usbSerialManager.findAndConnectDevice()
     }
     
-    // Stability delay for BMI trigger (Wait 1.5s completely still before locking in the values)
-    LaunchedEffect(isDetectingBMI, lastReadingTime) {
-        if (isDetectingBMI && !isFlowActive) {
-            val now = System.currentTimeMillis()
-            val timeSinceLast = now - lastReadingTime
-            val waitTime = 1500L - timeSinceLast
-            if (waitTime > 0) {
-                kotlinx.coroutines.delay(waitTime)
-            }
-            
-            // If we survive the delay without cancellation (meaning no sensor flutters > +/-0.2kg in 1.5s), capture snapshot!
-            if (isDetectingBMI && !isFlowActive) {
-                if (lastWeight != null && lastWeight!! >= 3.0f) {
-                    println("DEBUG: F3 - 🎯 Weight strictly stable at ${lastWeight}kg for 1.5s, capturing BMI...")
-                    processFirstValidReading(lastWeight!!, lastHeight ?: 0f)
-                } else {
-                    isDetectingBMI = false
-                }
-            }
-        }
-    }
+    // (Stability delay has been removed. We now rely entirely on UsbSerialManager's 
+    // internal increment-counter and setOnSensorStable callback for instant, delay-free progression.)
     
     // Monitor flow activity and sensor inactivity to terminate stale flows
     LaunchedEffect(isFlowActive, lastReadingTime, lowWeightDetectedAt) {
@@ -2166,6 +2165,8 @@ fun F3PlayerScreen(
         PlayerScreen(screenId = screenId, enableBMIFunctionality = false, refreshTrigger = assetRefreshTrigger)
         
         // ── Screen ID badge (top-left) — Material3 styled ──────────────────
+        var showTroubleshootMenu by remember { mutableStateOf(false) }
+        
         AnimatedVisibility(
             visible = !hideScreenId && screenId.isNotBlank(),
             modifier = Modifier
@@ -2180,7 +2181,8 @@ fun F3PlayerScreen(
             Surface(
                 modifier = Modifier
                     .padding(start = 8.dp, top = 8.dp)
-                    .border(1.dp, Color(0xFF3F3F46), RoundedCornerShape(12.dp)),
+                    .border(1.dp, Color(0xFF3F3F46), RoundedCornerShape(12.dp))
+                    .clickable { showTroubleshootMenu = true },
                 shape = RoundedCornerShape(12.dp),
                 color = Color(0xFF1E1F22),  // Fully opaque charcoal black — avoids alpha blending banding
                 tonalElevation = 0.dp,
@@ -2208,10 +2210,40 @@ fun F3PlayerScreen(
                 }
             }
         }
+        
+        if (showTroubleshootMenu) {
+            TroubleshootModal(
+                onDismiss = { showTroubleshootMenu = false },
+                onShowBMI = {
+                    paymentFlowState = PaymentFlowState.BMI_SHOWING
+                    // Inject mock data if empty
+                    if (bmiData.isNullOrEmpty()) {
+                        bmiData = mapOf(
+                            "weight" to 70.0,
+                            "height" to 175.0,
+                            "bmi" to 22.8,
+                            "category" to "Normal",
+                            "healthTip" to "Keep up the good work!",
+                            "isHeightValid" to true
+                        )
+                    }
+                    showTroubleshootMenu = false
+                },
+                onShowFortune = {
+                    paymentFlowState = PaymentFlowState.FORTUNE_SHOWING
+                    showTroubleshootMenu = false
+                },
+                isInternetConnected = !isOffline,
+                isUsbConnected = UsbSerialManager(context).isConnected(), // Will create a quick instance or just check
+                appMode = appMode,
+                paymentFlowState = paymentFlowState.name,
+                socketConnected = socketManager.isConnected()
+            )
+        }
 
         // ── Offline chip (top-right) — only shows when truly offline ────────
         AnimatedVisibility(
-            visible = isOffline,
+            visible = isOffline && !isPlaylistUpdating,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .zIndex(100f),
@@ -2232,20 +2264,15 @@ fun F3PlayerScreen(
                 color = Color(0xFFE11D48)  // Solid premium red — avoids alpha blending banding
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .background(Color.White, shape = RoundedCornerShape(50))
-                    )
-                    Text(
-                        text = "Offline",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
+                    Icon(
+                        imageVector = Icons.Default.WifiOff,
+                        contentDescription = "Offline",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -2811,45 +2838,12 @@ fun F3PlayerScreen(
             println("DEBUG: F3 - [MODAL]   hasUser: $hasUser, hasFortune: $hasFortune, hasWebUrl: $hasWebUrl")
         }
         
-        // BMI Detection Loading Overlay - shown when detection starts, hidden when modal shows
-        if (isDetectingBMI && paymentFlowState == PaymentFlowState.IDLE && (currentFlowType == "F1" || currentFlowType == "F2")) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.3f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Card(
-                    modifier = Modifier.padding(32.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White.copy(alpha = 0.95f)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "Please wait",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF1F2937)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Detecting BMI...",
-                            fontSize = 14.sp,
-                            color = Color(0xFF6B7280)
-                        )
-                    }
-                }
-            }
-        }
+        // (The manual isDetectingBMI overlay UI has been removed.
+        // It is now managed by PaymentFlowScreen via the DETECTING state.)
         
         // ========== PAYMENT FLOW STATE MACHINE - TRANSITIONS ==========
         // Hide detection loading when flow is active
-        if (paymentFlowState != PaymentFlowState.IDLE) {
+        if (isFlowActive) {
             isDetectingBMI = false
         }
         

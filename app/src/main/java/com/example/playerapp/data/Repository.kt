@@ -2140,30 +2140,36 @@ object Repository {
                 flowDrawerDir.mkdirs()
             }
             
-            // Clean up old files first
-            flowDrawerDir.listFiles()?.forEach { file ->
-                if (file.name.startsWith("slot_") && file.exists()) {
-                    file.delete()
-                    println("DEBUG: Repository.processFlowDrawerJsonResponse - Deleted old file: ${file.name}")
-                }
-            }
-            
-            // Download each image
+            // Download/verify each image
             imageUrls.forEachIndexed { index, url ->
                 try {
                     val normalizedUrl = normalizeServerAssetUrl(url)
                     if (normalizedUrl != null) {
                         val extension = extractExtension(normalizedUrl).ifBlank { ".jpg" }
-                        val localFile = File(flowDrawerDir, "slot_${index + 1}$extension")
+                        val urlHash = java.lang.Math.abs(normalizedUrl.hashCode()).toString(16)
+                        val expectedName = "slot_${index + 1}_$urlHash$extension"
+                        val localFile = File(flowDrawerDir, expectedName)
                         
-                        println("DEBUG: Repository.processFlowDrawerJsonResponse - Downloading image $index: $normalizedUrl")
-                        downloadAssetWithRetry(normalizedUrl, localFile, 2)
+                        // Clean up stale or mismatching files for this slot first
+                        flowDrawerDir.listFiles()?.forEach { file ->
+                            if (file.name.startsWith("slot_${index + 1}") && file.name != expectedName && file.name != "${expectedName}.tmp") {
+                                file.delete()
+                                println("DEBUG: Repository.processFlowDrawerJsonResponse - Deleted stale file: ${file.name}")
+                            }
+                        }
                         
                         if (localFile.exists() && localFile.length() > 0) {
                             localPaths[index] = localFile.absolutePath
-                            println("DEBUG: Repository.processFlowDrawerJsonResponse - Successfully downloaded: ${localFile.name}")
+                            println("DEBUG: Repository.processFlowDrawerJsonResponse - Using cached image for slot ${index + 1}: ${localFile.name}")
                         } else {
-                            println("DEBUG: Repository.processFlowDrawerJsonResponse - Failed to download: $normalizedUrl")
+                            println("DEBUG: Repository.processFlowDrawerJsonResponse - Downloading image $index: $normalizedUrl")
+                            downloadAssetWithRetry(normalizedUrl, localFile, 2)
+                            if (localFile.exists() && localFile.length() > 0) {
+                                localPaths[index] = localFile.absolutePath
+                                println("DEBUG: Repository.processFlowDrawerJsonResponse - Successfully downloaded: ${localFile.name}")
+                            } else {
+                                println("DEBUG: Repository.processFlowDrawerJsonResponse - Failed to download: $normalizedUrl")
+                            }
                         }
                     }
                 } catch (e: Exception) {

@@ -38,6 +38,8 @@ fun BMIDataModal(
 ) {
     if (!isVisible || bmiData == null) return
 
+    var showF2QR by remember { mutableStateOf(true) }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -52,18 +54,33 @@ fun BMIDataModal(
         val availableWidth = if (drawerOffset > 0) {
             screenWidthDp - drawerOffset.dp
         } else {
-            480.dp
+            screenWidthDp.coerceAtMost(480.dp)
         }
+
+        val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val resultsCardWidth = if (isLandscape && flowType == "F2" && showF2QR) {
+            if (drawerOffset > 0) {
+                val space = screenWidthDp - drawerOffset.dp
+                (space - 336.dp).coerceAtLeast(360.dp)
+            } else {
+                480.dp
+            }
+        } else {
+            availableWidth
+        }
+        val isCompact = !isLandscape
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Transparent)
         ) {
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = if (drawerOffset > 0) Arrangement.Start else Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(availableWidth)
+                    .align(if (drawerOffset > 0) Alignment.CenterStart else Alignment.Center),
+                contentAlignment = Alignment.Center
             ) {
                 val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
 
@@ -88,7 +105,7 @@ fun BMIDataModal(
 
                             Card(
                                 modifier = Modifier
-                                    .width(availableWidth)
+                                    .width(resultsCardWidth)
                                     .heightIn(max = 900.dp)
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
                                 shape = RoundedCornerShape(20.dp),
@@ -132,12 +149,11 @@ fun BMIDataModal(
 
                         // QR Card for F2 Mode
                         if (flowType == "F2") {
-                            var showF2QR by remember { mutableStateOf(true) }
                             if (showF2QR) {
                                 Spacer(modifier = Modifier.width(16.dp))
                                 Card(
                                     modifier = Modifier
-                                        .width(360.dp)
+                                        .width(300.dp)
                                         .heightIn(max = 900.dp)
                                         .padding(horizontal = 12.dp, vertical = 8.dp),
                                     shape = RoundedCornerShape(20.dp),
@@ -151,27 +167,13 @@ fun BMIDataModal(
                                             .fillMaxWidth()
                                             .padding(24.dp)
                                     ) {
-                                        IconButton(
-                                            onClick = { showF2QR = false },
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .size(32.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Close",
-                                                tint = Color.Gray,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .padding(top = 8.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            QRCodeScreen(bmiData = bmiData, isSaveCloudOnly = true)
+                                            QRCodeScreen(bmiData = bmiData, isSaveCloudOnly = true, isCompact = isCompact)
                                         }
                                     }
                                 }
@@ -214,7 +216,7 @@ fun BMIDataModal(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(24.dp)
+                                        .padding(16.dp)
                                 ) {
                                     if (allowDismissOnOverlay) {
                                         IconButton(
@@ -244,7 +246,6 @@ fun BMIDataModal(
 
                         // QR Card for F2 Mode
                         if (flowType == "F2") {
-                            var showF2QR by remember { mutableStateOf(true) }
                             if (showF2QR) {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Card(
@@ -260,27 +261,13 @@ fun BMIDataModal(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(24.dp)
+                                            .padding(16.dp)
                                     ) {
-                                        IconButton(
-                                            onClick = { showF2QR = false },
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .size(32.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Close",
-                                                tint = Color.Gray,
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                        }
-
                                         Box(
                                             modifier = Modifier.fillMaxWidth(),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            QRCodeScreen(bmiData = bmiData, isSaveCloudOnly = true)
+                                            QRCodeScreen(bmiData = bmiData, isSaveCloudOnly = true, isCompact = isCompact)
                                         }
                                     }
                                 }

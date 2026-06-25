@@ -443,7 +443,11 @@ fun BMIModal(
 
 
 @Composable
-fun QRCodeScreen(bmiData: Map<String, Any>?, isSaveCloudOnly: Boolean = false) {
+fun QRCodeScreen(
+    bmiData: Map<String, Any>?,
+    isSaveCloudOnly: Boolean = false,
+    isCompact: Boolean = false
+) {
     val steps = remember(isSaveCloudOnly) {
         if (isSaveCloudOnly) {
             listOf(
@@ -507,7 +511,7 @@ fun QRCodeScreen(bmiData: Map<String, Any>?, isSaveCloudOnly: Boolean = false) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "QR Code",
-                    modifier = Modifier.size(180.dp)
+                    modifier = Modifier.size(if (isCompact) 140.dp else 180.dp)
                 )
             }
         } ?: run {
@@ -538,79 +542,81 @@ fun QRCodeScreen(bmiData: Map<String, Any>?, isSaveCloudOnly: Boolean = false) {
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(if (isCompact) 8.dp else 16.dp))
 
         Text(
             text = if (isSaveCloudOnly) "Save to Cloud" else "Scan To Continue",
-            fontSize = 22.sp,
+            fontSize = if (isCompact) 18.sp else 22.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF1F2937),
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(if (isCompact) 4.dp else 6.dp))
 
         Text(
             text = if (isSaveCloudOnly) "Scan the QR code to save your results to the cloud" else "Secure payment and instant access to your Well2Day results",
-            fontSize = 14.sp,
+            fontSize = if (isCompact) 12.sp else 14.sp,
             color = Color(0xFF6B7280),
             textAlign = TextAlign.Center,
-            lineHeight = 20.sp
+            lineHeight = if (isCompact) 16.sp else 20.sp
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        if (!isCompact) {
+            Spacer(modifier = Modifier.height(16.dp))
 
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFFF8FAFC),
-                            Color(0xFFF1F5F9)
-                        )
-                    ),
-                    shape = RoundedCornerShape(18.dp)
-                )
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            steps.forEachIndexed { index, step ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .background(
-                                brush = Brush.linearGradient(
-                                    colors = listOf(
-                                        Color(0xFF111827),
-                                        Color(0xFF374151)
-                                    )
-                                ),
-                                shape = CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFFF8FAFC),
+                                Color(0xFFF1F5F9)
+                            )
+                        ),
+                        shape = RoundedCornerShape(18.dp)
+                    )
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                steps.forEachIndexed { index, step ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .background(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(
+                                            Color(0xFF111827),
+                                            Color(0xFF374151)
+                                        )
+                                    ),
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = (index + 1).toString(),
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
                         Text(
-                            text = (index + 1).toString(),
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
+                            text = step,
+                            modifier = Modifier.weight(1f),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF334155),
+                            lineHeight = 20.sp
                         )
                     }
-
-                    Text(
-                        text = step,
-                        modifier = Modifier.weight(1f),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF334155),
-                        lineHeight = 20.sp
-                    )
                 }
             }
         }
@@ -719,555 +725,7 @@ fun RowScope.MetricCard(
 
 @Composable
 fun BMIScreen(bmiData: Map<String, Any>?) {
-    val context = LocalContext.current
-    val bmi = remember(bmiData) {
-        (bmiData?.get("bmi") as? Number)?.toDouble()
-    }
-    val category = remember(bmiData) {
-        bmiData?.get("category") as? String ?: ""
-    }
-    val height = remember(bmiData) {
-        bmiData?.get("height") as? Number
-    }
-    val weight = remember(bmiData) {
-        bmiData?.get("weight") as? Number
-    }
-    val screenId = remember(bmiData) {
-        bmiData?.get("screenId") as? String
-    }
-    val healthTip = remember(bmiData) {
-        (bmiData?.get("healthTip") as? String)?.takeIf { it.isNotBlank() } ?: ""
-    }
-    val isHeightValid = remember(bmiData) {
-        bmiData?.get("isHeightValid") as? Boolean ?: (height != null && height.toDouble() > 0.0)
-    }
-    
-    // Logo state (local file path, loading, error)
-    var logoPath by remember { mutableStateOf<String?>(null) }
-    var logoLoading by remember { mutableStateOf(false) }
-    var logoError by remember { mutableStateOf<String?>(null) }
-    var showLogo by remember { mutableStateOf(LogoVisibilityStorage.getShowLogo(context)) }
-    
-    // Fetch and download logo when screen is displayed
-    LaunchedEffect(screenId) {
-        if (!screenId.isNullOrBlank()) {
-            logoLoading = true
-            logoError = null
-            
-            // Check if cached logo exists first
-            val localFile = java.io.File(context.filesDir, "screen-logo-$screenId")
-            if (localFile.exists()) {
-                logoPath = localFile.absolutePath
-                logoLoading = false
-            }
-            
-            // Fetch logo from server
-            Repository.getScreenLogo(context, screenId) { success, localPath, error ->
-                logoLoading = false
-                if (success && !localPath.isNullOrBlank()) {
-                    logoPath = localPath
-                    logoError = null
-                } else {
-                    if (logoPath == null) { // Only clear if we don't have a cached version
-                        logoPath = null
-                    }
-                    logoError = error
-                }
-            }
-        } else {
-            logoLoading = false
-            logoPath = null
-            logoError = null
-        }
-    }
-    
-    // Watch for logo visibility preference changes (optimized polling)
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(300) // Reduced from 500ms to 300ms
-            val newShowLogo = LogoVisibilityStorage.getShowLogo(context)
-            if (newShowLogo != showLogo) {
-                showLogo = newShowLogo
-            }
-        }
-    }
-
-    // Calculate ideal weight range for height (BMI 18.5-24.9)
-    val idealWeightRange = remember(height) {
-        height?.let { h ->
-            val heightM = h.toDouble() / 100.0
-            val minWeight = 18.5 * (heightM * heightM)
-            val maxWeight = 24.9 * (heightM * heightM)
-            Pair(
-                String.format("%.1f", minWeight).toDouble(),
-                String.format("%.1f", maxWeight).toDouble()
-            )
-        }
-    }
-
-    // Calculate recommended daily water consumption
-    val waterRecommendation = remember(weight) {
-        weight?.let { w ->
-            val weightKg = w.toDouble()
-            val waterLiters = weightKg * 0.033 // 33ml per kg
-            val waterMl = (weightKg * 33).toInt()
-            val cups = (waterMl / 250.0).toInt()
-            Triple(
-                String.format("%.1f", waterLiters).toDouble(),
-                waterMl,
-                cups
-            )
-        }
-    }
-
-    val bmiColor = remember(bmi) {
-        when {
-            bmi == null -> Color(0xFF6B7280)
-            bmi < 18.5 -> Color(0xFF3B82F6)
-            bmi < 25 -> Color(0xFF10B981)
-            bmi < 30 -> Color(0xFFF59E0B)
-            else -> Color(0xFFEF4444)
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = 900.dp)
-            .padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Logo display (if available, from local storage, and if enabled in dev panel)
-        if (showLogo) {
-            Box(
-                modifier = Modifier
-                    .heightIn(max = 60.dp)
-                    .widthIn(max = 180.dp)
-                    .padding(bottom = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                when {
-                    logoLoading && logoPath == null -> {
-                        // Show nothing while fetching
-                    }
-                    logoPath != null -> {
-                        // Show logo image
-                        AsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(File(logoPath!!))
-                                .crossfade(true)
-                                .build(),
-                            contentDescription = "Screen Logo",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit,
-                            onError = {
-                                logoError = "Failed to load image"
-                                logoPath = null
-                            }
-                        )
-                    }
-                    logoError != null -> {
-                        // Show error state (silently fail - don't show error UI)
-                        // Logo just won't be displayed
-                    }
-                    else -> {
-                        // No logo available (don't show anything)
-                    }
-                }
-            }
-        }
-        
-        // Title — enlarged for TV viewing
-        Text(
-            text = "Your Health Results",
-            fontSize = 26.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF111827),
-            modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
-        )
-        
-        // Body Mass Index
-       
-        
-        // Body Measurements Section
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = "Body Measurements",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF374151),
-                modifier = Modifier.padding(bottom = 10.dp)
-            )
-            
-            // Weight and Height side by side
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Weight
-                if (weight != null) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = "Weight",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF6B7280)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = String.format("%.1f", weight.toFloat()),
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF111827)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "kg",
-                            fontSize = 15.sp,
-                            color = Color(0xFF6B7280)
-                        )
-                    }
-                }
-                
-                // Divider
-                if (weight != null && height != null && isHeightValid) {
-                    VerticalDivider(
-                        modifier = Modifier.height(45.dp),
-                        color = Color(0xFFE5E7EB),
-                        thickness = 1.dp
-                    )
-                }
-                
-                // Height
-                if (height != null && isHeightValid) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = "Height",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF6B7280)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = String.format("%.0f", height.toFloat()),
-                            fontSize = 36.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF111827)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "cm",
-                            fontSize = 15.sp,
-                            color = Color(0xFF6B7280)
-                        )
-                    }
-                }
-            }
-        }
-
-        if (isHeightValid && bmi != null) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Body Mass Index (BMI)",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF6B7280)
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = String.format("%.1f", bmi),
-                    fontSize = 48.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = bmiColor
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = category,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF374151)
-                )
-            }
-        } else {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Weight Measurement Complete",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF374151)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Height unavailable, so BMI was not calculated.",
-                    fontSize = 14.sp,
-                    color = Color(0xFF6B7280)
-                )
-            }
-        }
-
-        // Health tip (from local JSON, by BMI category)
-        if (healthTip.isNotBlank()) {
-            Spacer(modifier = Modifier.height(10.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFFECFDF5) // Light green tint for health tip
-                ),
-                elevation = CardDefaults.cardElevation(1.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp)
-                ) {
-                    Text(
-                        text = "Health tip for you",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF6B7280)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = healthTip,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = Color(0xFF4B5563),
-                        lineHeight = 20.sp
-                    )
-                }
-            }
-        }
-
-        // Water Consumption Level Suggestion - Compact Professional Display
-        waterRecommendation?.let { (waterLiters, waterMl, cups) ->
-            if (weight != null) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFFF0F9FF) // Light blue background
-                    ),
-                    elevation = CardDefaults.cardElevation(1.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(
-                                        Color.Transparent,
-                                        shape = RoundedCornerShape(8.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                // Try to load the water image
-                                Image(
-                                    painter = painterResource(id = R.drawable.water),
-                                    contentDescription = "Water Intake",
-                                    modifier = Modifier.size(36.dp)
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = "Water Intake",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF374151)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "${String.format("%.1f", waterLiters)}L / $waterMl ml",
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF06B6D4)
-                                )
-                            }
-                        }
-                        Column(
-                            horizontalAlignment = Alignment.End
-                        ) {
-                            Text(
-                                text = "$cups cups",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF6B7280)
-                            )
-                            Text(
-                                text = "per day",
-                                fontSize = 11.sp,
-                                color = Color(0xFF9CA3AF)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Ideal Weight Range Suggestion - Compact Professional Display
-        idealWeightRange?.let { (minWeight, maxWeight) ->
-            if (height != null && isHeightValid) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFFF0F4FF) // Light blue-purple background
-                    ),
-                    elevation = CardDefaults.cardElevation(1.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(
-                                        Color.Transparent,
-                                        shape = RoundedCornerShape(8.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                // Try to load the weight image
-                                Image(
-                                    painter = painterResource(id = R.drawable.weigth),
-                                    contentDescription = "Ideal Weight",
-                                    modifier = Modifier.size(36.dp)
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = "Ideal Weight Range",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF374151)
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "${String.format("%.1f", minWeight)} – ${String.format("%.1f", maxWeight)} kg",
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF3B82F6)
-                                )
-                            }
-                        }
-                        Text(
-                            text = "H: ${String.format("%.0f", height.toFloat())}cm",
-                            fontSize = 11.sp,
-                            color = Color(0xFF9CA3AF)
-                        )
-                    }
-                }
-            }
-        }
-        
-        // Health Tips Section - Show only 1 random tip
-        var healthTips by remember { mutableStateOf<List<String>?>(null) }
-        var healthTipsLoading by remember { mutableStateOf(false) }
-        var healthTipsError by remember { mutableStateOf<String?>(null) }
-        var randomTip by remember { mutableStateOf<String?>(null) }
-        
-        LaunchedEffect(category, isHeightValid) {
-            if (isHeightValid && category.isNotBlank()) {
-                healthTipsLoading = true
-                healthTipsError = null
-                Repository.getHealthTips(category) { success, tips, error ->
-                    healthTipsLoading = false
-                    if (success && tips != null && tips.isNotEmpty()) {
-                        // Store all tips
-                        healthTips = tips
-                        // Pick one random tip
-                        randomTip = tips.random()
-                    } else {
-                        healthTipsError = error
-                        // Don't show anything if health tips fail to load
-                        println("DEBUG: BMIScreen - Health tips failed to load: $error")
-                    }
-                }
-            } else {
-                healthTips = null
-                randomTip = null
-            }
-        }
-        
-        // Show single random tip only if successfully loaded
-        if (!healthTipsLoading && randomTip != null && healthTipsError == null) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFFFFF7ED) // Light orange/amber background
-                ),
-                elevation = CardDefaults.cardElevation(1.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp)
-                ) {
-                    Text(
-                        text = "Health Tip",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF374151),
-                        modifier = Modifier.padding(bottom = 10.dp)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Text(
-                            text = "• ",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF59E0B)
-                        )
-                        Text(
-                            text = randomTip ?: "",
-                            fontSize = 13.sp,
-                            color = Color(0xFF374151),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
-        }
-    }
+    BMIScreenNew(bmiData = bmiData)
 }
 
 
@@ -1406,18 +864,118 @@ fun generateQrBitmap(text: String, width: Int, height: Int): Bitmap? {
         val hints = hashMapOf<EncodeHintType, Any>().apply {
             put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.H)
             put(EncodeHintType.CHARACTER_SET, "UTF-8")
-            put(EncodeHintType.MARGIN, 1)
+            put(EncodeHintType.MARGIN, 0)
         }
         
         val writer = QRCodeWriter()
-        val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, width, height, hints)
+        val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, 0, 0, hints)
         
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
-        for (x in 0 until width) {
-            for (y in 0 until height) {
-                bitmap.setPixel(x, y, if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        val matrixWidth = bitMatrix.width
+        val matrixHeight = bitMatrix.height
+        
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        
+        // Background color
+        canvas.drawColor(android.graphics.Color.WHITE)
+        
+        // Paint settings for Slate 900 color
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.parseColor("#0F172A")
+            style = android.graphics.Paint.Style.FILL
+        }
+        
+        // Padding: we want at least 1 module of spacing around the QR code.
+        // So the virtual grid has matrixWidth + 2 modules.
+        val paddingModules = 1f
+        val virtualWidth = matrixWidth + 2 * paddingModules
+        val virtualHeight = matrixHeight + 2 * paddingModules
+        
+        val moduleWidth = width.toFloat() / virtualWidth
+        val moduleHeight = height.toFloat() / virtualHeight
+        
+        val offsetX = paddingModules * moduleWidth
+        val offsetY = paddingModules * moduleHeight
+        
+        // Helper to check if coordinates fall within Finder patterns or their separators
+        fun isFinderPattern(x: Int, y: Int): Boolean {
+            if (x in 0..7 && y in 0..7) return true // Top-left (7 finder + 1 separator)
+            if (x in (matrixWidth - 8) until matrixWidth && y in 0..7) return true // Top-right
+            if (x in 0..7 && y in (matrixHeight - 8) until matrixHeight) return true // Bottom-left
+            return false
+        }
+        
+        // 1. Draw regular modules as smooth rounded dots
+        for (x in 0 until matrixWidth) {
+            for (y in 0 until matrixHeight) {
+                if (bitMatrix[x, y] && !isFinderPattern(x, y)) {
+                    val left = offsetX + x * moduleWidth
+                    val top = offsetY + y * moduleHeight
+                    val right = offsetX + (x + 1) * moduleWidth
+                    val bottom = offsetY + (y + 1) * moduleHeight
+                    
+                    val gapX = moduleWidth * 0.05f
+                    val gapY = moduleHeight * 0.05f
+                    
+                    val rect = android.graphics.RectF(
+                        left + gapX,
+                        top + gapY,
+                        right - gapX,
+                        bottom - gapY
+                    )
+                    val rx = moduleWidth * 0.4f
+                    val ry = moduleHeight * 0.4f
+                    canvas.drawRoundRect(rect, rx, ry, paint)
+                }
             }
         }
+        
+        // 2. Draw three Finder Patterns manually with rounded nested boxes
+        val finderSize = 7
+        val finderCoordinates = listOf(
+            Pair(0, 0),
+            Pair(matrixWidth - 7, 0),
+            Pair(0, matrixHeight - 7)
+        )
+        
+        for (coord in finderCoordinates) {
+            val fx = coord.first
+            val fy = coord.second
+            
+            val left = offsetX + fx * moduleWidth
+            val top = offsetY + fy * moduleHeight
+            val right = offsetX + (fx + finderSize) * moduleWidth
+            val bottom = offsetY + (fy + finderSize) * moduleHeight
+            
+            // Outer black rounded square
+            paint.color = android.graphics.Color.parseColor("#0F172A")
+            val outerRect = android.graphics.RectF(left, top, right, bottom)
+            val outerRadius = moduleWidth * 1.8f
+            canvas.drawRoundRect(outerRect, outerRadius, outerRadius, paint)
+            
+            // Middle white rounded square
+            paint.color = android.graphics.Color.WHITE
+            val innerRect1 = android.graphics.RectF(
+                left + moduleWidth,
+                top + moduleHeight,
+                right - moduleWidth,
+                bottom - moduleHeight
+            )
+            val middleRadius = moduleWidth * 1.2f
+            canvas.drawRoundRect(innerRect1, middleRadius, middleRadius, paint)
+            
+            // Inner black rounded square
+            paint.color = android.graphics.Color.parseColor("#0F172A")
+            val innerRect2 = android.graphics.RectF(
+                left + moduleWidth * 2f,
+                top + moduleHeight * 2f,
+                right - moduleWidth * 2f,
+                bottom - moduleHeight * 2f
+            )
+            val innerRadius = moduleWidth * 0.8f
+            canvas.drawRoundRect(innerRect2, innerRadius, innerRadius, paint)
+        }
+        
         bitmap
     } catch (e: Exception) {
         null

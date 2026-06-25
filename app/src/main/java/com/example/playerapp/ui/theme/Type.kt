@@ -10,8 +10,8 @@ import com.example.playerapp.R
 
 // Inter Font Family
 val InterFontFamily = FontFamily(
-    Font(R.font.inter_18pt_regular, FontWeight.Normal),
-    Font(R.font.inter_24pt_regular, FontWeight.Normal)
+    Font(R.font.inter_regular, FontWeight.Normal),
+    Font(R.font.inter_bold, FontWeight.Bold)
 )
 
 // Set of Material typography styles using Inter font

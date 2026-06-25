@@ -37,21 +37,21 @@ android {
             applicationId = "com.example.playerapp.f3.normal"
             versionNameSuffix = "-Normal"
             buildConfigField("String", "FLOW_TYPE", "\"\"")
-            resValue("string", "app_name", "F3 Normal")
+            resValue("string", "app_name", "Well2Day BMI")
         }
         create("f1") {
             dimension = "flow"
             applicationId = "com.example.playerapp.f3.f1"
             versionNameSuffix = "-F1"
             buildConfigField("String", "FLOW_TYPE", "\"F1\"")
-            resValue("string", "app_name", "Adscape BMI")
+            resValue("string", "app_name", "Well2Day BMI")
         }
         create("f2") {
             dimension = "flow"
             applicationId = "com.example.playerapp.f3.f2"
             versionNameSuffix = "-F2"
             buildConfigField("String", "FLOW_TYPE", "\"F2\"")
-            resValue("string", "app_name", "F3 F2")
+            resValue("string", "app_name", "Well2Day BMI")
         }
     }
 
@@ -74,6 +74,15 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    applicationVariants.all {
+        val variantName = name
+        val version = versionName
+        outputs.all {
+            val outputImpl = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            outputImpl.outputFileName = "Well2Day_BMI_${variantName}_v${version}.apk"
+        }
     }
 }
 
