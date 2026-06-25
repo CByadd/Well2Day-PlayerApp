@@ -38,8 +38,6 @@ fun BMIDataModal(
 ) {
     if (!isVisible || bmiData == null) return
 
-    var showF2QR by remember { mutableStateOf(true) }
-
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -58,7 +56,7 @@ fun BMIDataModal(
         }
 
         val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        val resultsCardWidth = if (isLandscape && flowType == "F2" && showF2QR) {
+        val resultsCardWidth = if (isLandscape && flowType == "F2") {
             if (drawerOffset > 0) {
                 val space = screenWidthDp - drawerOffset.dp
                 (space - 336.dp).coerceAtLeast(360.dp)
@@ -66,7 +64,12 @@ fun BMIDataModal(
                 480.dp
             }
         } else {
-            availableWidth
+            if (drawerOffset > 0) {
+                val space = screenWidthDp - drawerOffset.dp
+                space.coerceAtLeast(400.dp)
+            } else {
+                600.dp
+            }
         }
         val isCompact = !isLandscape
 
@@ -147,38 +150,6 @@ fun BMIDataModal(
                             }
                         }
 
-                        // QR Card for F2 Mode
-                        if (flowType == "F2") {
-                            if (showF2QR) {
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Card(
-                                    modifier = Modifier
-                                        .width(300.dp)
-                                        .heightIn(max = 900.dp)
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                                    shape = RoundedCornerShape(20.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = Color.White.copy(alpha = 0.95f)
-                                    ),
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(24.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 8.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            QRCodeScreen(bmiData = bmiData, isSaveCloudOnly = true, isCompact = isCompact)
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
                 } else {
                     // Portrait orientation: Column layout
@@ -243,34 +214,6 @@ fun BMIDataModal(
                                 }
                             }
                         }
-
-                        // QR Card for F2 Mode
-                        if (flowType == "F2") {
-                            if (showF2QR) {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Card(
-                                    modifier = Modifier
-                                        .width(availableWidth)
-                                        .padding(vertical = 8.dp),
-                                    shape = RoundedCornerShape(20.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = Color.White.copy(alpha = 0.95f)
-                                    ),
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            QRCodeScreen(bmiData = bmiData, isSaveCloudOnly = true, isCompact = isCompact)
-                                        }
-                                    }
-                                }
                             }
                         }
                     }

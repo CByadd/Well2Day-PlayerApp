@@ -122,14 +122,6 @@ fun PaymentFlowScreen(
                             drawerOffset = drawerOffset,
                             allowDismissOnOverlay = allowDismissOnOverlay
                         )
-                    } else if (!processingComplete) {
-                        // ── 5-second processing animation ──
-                        println("[PAYMENT_FLOW_SCREEN] 🎨 RENDERING PROCESSING ANIMATION (5s gate)")
-                        ProcessingGateModal(
-                            onDismiss = onDismiss,
-                            allowDismissOnOverlay = allowDismissOnOverlay,
-                            drawerOffset = 0
-                        )
                     } else {
                         // ── BMI results ──
                         println("[PAYMENT_FLOW_SCREEN] 🎨 RENDERING BMI DATA MODAL")

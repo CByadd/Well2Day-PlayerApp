@@ -31,6 +31,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.playerapp.R
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import com.example.playerapp.data.Repository
 
 val InterFontFamily = FontFamily(
@@ -66,6 +69,27 @@ fun BMIScreenNew(bmiData: Map<String, Any>?) {
     val isHeightValid = remember(bmiData) {
         bmiData?.get("isHeightValid") as? Boolean ?: (height != null && height.toDouble() > 0.0)
     }
+
+    var startAnimation by remember { mutableStateOf(false) }
+    LaunchedEffect(bmiData) {
+        startAnimation = true
+    }
+
+    val animatedBmi by animateFloatAsState(
+        targetValue = if (startAnimation) (bmi?.toFloat() ?: 0f) else 0f,
+        animationSpec = tween(1500, easing = FastOutSlowInEasing),
+        label = "bmiAnim"
+    )
+    val animatedWeight by animateFloatAsState(
+        targetValue = if (startAnimation) (weight?.toFloat() ?: 0f) else 0f,
+        animationSpec = tween(1500, easing = FastOutSlowInEasing),
+        label = "weightAnim"
+    )
+    val animatedHeight by animateFloatAsState(
+        targetValue = if (startAnimation) (height?.toFloat() ?: 0f) else 0f,
+        animationSpec = tween(1500, easing = FastOutSlowInEasing),
+        label = "heightAnim"
+    )
 
     // Colors
     val backgroundColor = Color.Transparent
@@ -140,7 +164,7 @@ fun BMIScreenNew(bmiData: Map<String, Any>?) {
             Box(modifier = Modifier.weight(1f)) {
                 MeasurementCard(
                     label = "Weight",
-                    value = weight?.let { String.format("%.1f", it.toFloat()) } ?: "--",
+                    value = if (weight != null) String.format("%.1f", animatedWeight) else "--",
                     unit = "kg",
                     pillColor = Color(0xFF2563EB)
                 )
@@ -148,7 +172,7 @@ fun BMIScreenNew(bmiData: Map<String, Any>?) {
             Box(modifier = Modifier.weight(1f)) {
                 MeasurementCard(
                     label = "Height",
-                    value = height?.let { String.format("%.0f", it.toFloat()) } ?: "--",
+                    value = if (height != null) String.format("%.0f", animatedHeight) else "--",
                     unit = "cm",
                     pillColor = Color(0xFF2563EB)
                 )
@@ -157,7 +181,7 @@ fun BMIScreenNew(bmiData: Map<String, Any>?) {
 
         // Main BMI Card
         if (isHeightValid && bmi != null) {
-            BMIGradientCard(bmi = bmi, category = category)
+            BMIGradientCard(bmi = animatedBmi.toDouble(), category = category)
         }
 
             // Middle Row: Water & Ideal Range
@@ -219,7 +243,7 @@ fun MeasurementCard(label: String, value: String, unit: String, pillColor: Color
                 ) {
                     Text(
                         text = label,
-                        fontFamily = LexendFontFamily,
+                        fontFamily = InterFontFamily,
                         color = Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
@@ -230,14 +254,14 @@ fun MeasurementCard(label: String, value: String, unit: String, pillColor: Color
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     text = value,
-                    fontFamily = ManropeFontFamily,
+                    fontFamily = InterFontFamily,
                     fontSize = 40.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF1E293B)
                 )
                 Text(
                     text = " $unit",
-                    fontFamily = LexendFontFamily,
+                    fontFamily = InterFontFamily,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF64748B),
@@ -280,7 +304,7 @@ fun BMIGradientCard(bmi: Double, category: String) {
                 Column {
                     Text(
                         text = "CURRENT STATUS",
-                        fontFamily = LexendFontFamily,
+                        fontFamily = InterFontFamily,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF64748B),
@@ -289,7 +313,7 @@ fun BMIGradientCard(bmi: Double, category: String) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Body Mass Index",
-                        fontFamily = LexendFontFamily,
+                        fontFamily = InterFontFamily,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF0F766E) // Dark Teal
@@ -309,7 +333,7 @@ fun BMIGradientCard(bmi: Double, category: String) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (category.isNotBlank()) category else "Result",
-                            fontFamily = LexendFontFamily,
+                            fontFamily = InterFontFamily,
                             color = pillColor,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -323,7 +347,7 @@ fun BMIGradientCard(bmi: Double, category: String) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     text = String.format("%.1f", bmi),
-                    fontFamily = ManropeFontFamily,
+                    fontFamily = InterFontFamily,
                     fontSize = 64.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF0F766E),
@@ -331,7 +355,7 @@ fun BMIGradientCard(bmi: Double, category: String) {
                 )
                 Text(
                     text = " kg/m²",
-                    fontFamily = LexendFontFamily,
+                    fontFamily = InterFontFamily,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color(0xFF64748B),
@@ -346,10 +370,10 @@ fun BMIGradientCard(bmi: Double, category: String) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("UNDERWEIGHT", fontFamily = LexendFontFamily, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
-                Text("NORMAL", fontFamily = LexendFontFamily, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
-                Text("OVERWEIGHT", fontFamily = LexendFontFamily, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
-                Text("OBESE", fontFamily = LexendFontFamily, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF4444))
+                Text("UNDERWEIGHT", fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+                Text("NORMAL", fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+                Text("OVERWEIGHT", fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF94A3B8))
+                Text("OBESE", fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEF4444))
             }
             
             Spacer(modifier = Modifier.height(8.dp))
@@ -369,20 +393,30 @@ fun BMIGradientCard(bmi: Double, category: String) {
                             Color(0xFFB91C1C)  // Red
                         )
                     )
-                    drawRoundRect(
-                        brush = gradient,
-                        size = size,
-                        cornerRadius = CornerRadius(8.dp.toPx())
-                    )
-                    
-                    // Draw indicator line
-                    // Map BMI 15 to 40 across the width
+                    // Draw animated filling bar
                     val minBmi = 15.0
                     val maxBmi = 40.0
                     val clampedBmi = bmi.coerceIn(minBmi, maxBmi)
                     val progress = ((clampedBmi - minBmi) / (maxBmi - minBmi)).toFloat()
                     val indicatorX = size.width * progress
                     
+                    // Draw background track (light gray)
+                    drawRoundRect(
+                        color = Color(0xFFF1F5F9),
+                        size = size,
+                        cornerRadius = CornerRadius(8.dp.toPx())
+                    )
+                    
+                    // Draw filled gradient area
+                    if (indicatorX > 0) {
+                        drawRoundRect(
+                            brush = gradient,
+                            size = Size(indicatorX, size.height),
+                            cornerRadius = CornerRadius(8.dp.toPx())
+                        )
+                    }
+                    
+                    // Draw indicator line
                     drawRoundRect(
                         color = Color.White,
                         topLeft = Offset(indicatorX - 2.dp.toPx(), 0f),
@@ -404,7 +438,7 @@ fun BMIGradientCard(bmi: Double, category: String) {
             Text(
                 text = summaryText,
                 fontFamily = InterFontFamily,
-                fontSize = 14.sp,
+                fontSize = 12.sp,
                 color = Color(0xFF475569),
                 lineHeight = 20.sp
             )
@@ -468,7 +502,7 @@ fun WaterIntakeCard(waterRecommendation: Triple<String, Int, Int>?) {
                         Text(
                             text = "${waterRecommendation?.first ?: "--"}",
                             fontFamily = ManropeFontFamily,
-                            fontSize = 20.sp, // Smaller font
+                            fontSize = 12.sp, // Smaller font
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1E293B)
                         )
@@ -627,21 +661,21 @@ fun WellnessTipCard(tipText: String) {
                     .fillMaxWidth()
                     .padding(16.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(Color.White.copy(alpha = 0.15f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_bulb),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                
-                Spacer(modifier = Modifier.height(16.dp))
+//                Box(
+//                    modifier = Modifier
+//                        .size(40.dp)
+//                        .background(Color.White.copy(alpha = 0.15f), CircleShape),
+//                    contentAlignment = Alignment.Center
+//                ) {
+//                    Icon(
+//                        painter = painterResource(id = R.drawable.ic_bulb),
+//                        contentDescription = null,
+//                        tint = Color.White,
+//                        modifier = Modifier.size(22.dp)
+//                    )
+//                }
+//
+//                Spacer(modifier = Modifier.height(16.dp))
                 
                 Text(
                     text = "Daily Wellness Tip",
