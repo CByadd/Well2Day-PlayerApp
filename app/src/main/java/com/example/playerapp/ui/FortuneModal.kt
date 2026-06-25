@@ -8,6 +8,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
@@ -26,14 +29,16 @@ fun FortuneModal(
 ) {
     if (!isVisible || bmiData == null) return
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = allowDismissOnOverlay,
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.65f))
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    if (allowDismissOnOverlay) onDismiss()
+                })
+            }
+            .zIndex(100f)
     ) {
         val configuration = LocalConfiguration.current
         val screenWidthDp = configuration.screenWidthDp.dp

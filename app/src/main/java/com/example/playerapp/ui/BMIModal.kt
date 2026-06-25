@@ -10,10 +10,11 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.*
-import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -253,14 +254,15 @@ fun BMIModal(
         label = "modalScale"
     )
     
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = allowDismissOnOverlay, // Allow overlay dismissal in dev mode
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    if (allowDismissOnOverlay) onDismiss()
+                })
+            }
+            .zIndex(100f)
     ) {
         // Completely transparent background - video shows through
         val configuration = LocalConfiguration.current
@@ -749,18 +751,50 @@ fun ProcessingScreen() {
         verticalArrangement = Arrangement.Center,
         modifier = Modifier.fillMaxWidth().padding(16.dp)
     ) {
-        val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.processing_animation))
-        
-        LottieAnimation(
-            composition = composition,
-            iterations = LottieConstants.IterateForever,
-            modifier = Modifier
-                .size(240.dp)
-                .padding(bottom = 24.dp)
+        val infiniteTransition = rememberInfiniteTransition(label = "processing_spinner")
+        val rotation by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "processing_rotation"
         )
         
+        Box(
+            modifier = Modifier
+                .size(160.dp)
+                .padding(bottom = 24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.foundation.Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { rotationZ = rotation }
+            ) {
+                val brush = Brush.sweepGradient(
+                    colors = listOf(
+                        Color(0x00E11D48), // Transparent Red
+                        Color(0xFFE11D48), // Red
+                        Color(0xFF8B5CF6), // Purple
+                        Color(0xFF3B82F6), // Blue
+                        Color(0x003B82F6)  // Transparent gap
+                    )
+                )
+                drawCircle(
+                    brush = brush,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 16.dp.toPx(),
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                )
+            }
+            // Removed inner icon to ensure cleaner look
+        }
+        
         Text(
-            text = "Processing Your Screen",
+            text = "Processing Your Scan",
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF1F2937),

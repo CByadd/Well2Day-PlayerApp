@@ -12,6 +12,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -85,26 +88,14 @@ fun PaymentFlowScreen(
 
             PaymentFlowState.QR_SHOWING -> {
                 if (currentBmiData != null) {
-                    if (forcedScreen == F1Screen.LOADING) {
-                        BMIModal(
-                            isVisible = true,
-                            bmiData = currentBmiData,
-                            flowType = flowType,
-                            onDismiss = onDismiss,
-                            forceScreen = F1Screen.LOADING,
-                            drawerOffset = drawerOffset,
-                            allowDismissOnOverlay = allowDismissOnOverlay
-                        )
-                    } else {
-                        println("[PAYMENT_FLOW_SCREEN] 🎨 RENDERING QR MODAL")
-                        QRModal(
-                            isVisible = true,
-                            bmiData = currentBmiData,
-                            onDismiss = onDismiss,
-                            drawerOffset = drawerOffset,
-                            allowDismissOnOverlay = allowDismissOnOverlay
-                        )
-                    }
+                    println("[PAYMENT_FLOW_SCREEN] 🎨 RENDERING QR MODAL")
+                    QRModal(
+                        isVisible = true,
+                        bmiData = currentBmiData,
+                        onDismiss = onDismiss,
+                        drawerOffset = drawerOffset,
+                        allowDismissOnOverlay = allowDismissOnOverlay
+                    )
                 } else {
                     println("[PAYMENT_FLOW_SCREEN] ⚠️ QR_SHOWING but bmiData is null — not rendering")
                 }
@@ -112,29 +103,16 @@ fun PaymentFlowScreen(
 
             PaymentFlowState.BMI_SHOWING -> {
                 if (currentBmiData != null) {
-                    if (forcedScreen == F1Screen.PROCESSING) {
-                        // Dev-forced processing screen
-                        BMIModal(
-                            isVisible = true,
-                            bmiData = currentBmiData,
-                            flowType = flowType,
-                            onDismiss = onDismiss,
-                            forceScreen = F1Screen.PROCESSING,
-                            drawerOffset = drawerOffset,
-                            allowDismissOnOverlay = allowDismissOnOverlay
-                        )
-                    } else {
-                        // ── BMI results ──
-                        println("[PAYMENT_FLOW_SCREEN] 🎨 RENDERING BMI DATA MODAL")
-                        BMIDataModal(
-                            isVisible = true,
-                            bmiData = currentBmiData,
-                            flowType = flowType,
-                            onDismiss = onDismiss,
-                            drawerOffset = drawerOffset,
-                            allowDismissOnOverlay = allowDismissOnOverlay
-                        )
-                    }
+                    // ── BMI results ──
+                    println("[PAYMENT_FLOW_SCREEN] 🎨 RENDERING BMI DATA MODAL")
+                    BMIDataModal(
+                        isVisible = true,
+                        bmiData = currentBmiData,
+                        flowType = flowType,
+                        onDismiss = onDismiss,
+                        drawerOffset = drawerOffset,
+                        allowDismissOnOverlay = allowDismissOnOverlay
+                    )
                 } else {
                     println("[PAYMENT_FLOW_SCREEN] ⚠️ BMI_SHOWING but bmiData is null — not rendering")
                 }
@@ -200,50 +178,46 @@ private fun ProcessingGateModal(
     allowDismissOnOverlay: Boolean,
     drawerOffset: Int = 0
 ) {
-    Dialog(
-        onDismissRequest = { if (allowDismissOnOverlay) onDismiss() },
-        properties = DialogProperties(
-            dismissOnBackPress = false,
-            dismissOnClickOutside = allowDismissOnOverlay,
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.65f))
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    if (allowDismissOnOverlay) onDismiss()
+                })
+            }
+            .zIndex(100f)
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = if (drawerOffset > 0) Arrangement.Start else Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = if (drawerOffset > 0) Arrangement.Start else Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .padding(horizontal = if (drawerOffset > 0) 32.dp else 16.dp, vertical = 32.dp)
+                    .wrapContentHeight(),
+                shape = RoundedCornerShape(32.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                elevation = CardDefaults.cardElevation(defaultElevation = 24.dp)
             ) {
-                Card(
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .padding(horizontal = if (drawerOffset > 0) 32.dp else 16.dp, vertical = 32.dp)
-                        .wrapContentHeight(),
-                    shape = RoundedCornerShape(32.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 24.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        Color(0xFFFFFFFF),
-                                        Color(0xFFF1F5F9)
-                                    )
+                        .fillMaxWidth()
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFFFFFFFF),
+                                    Color(0xFFF1F5F9)
                                 )
                             )
-                            .padding(horizontal = 24.dp, vertical = 48.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        ProcessingScreen() // Reuses the animated loading composable from BMIModal
-                    }
+                        )
+                        .padding(horizontal = 24.dp, vertical = 48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ProcessingScreen() // Reuses the animated loading composable from BMIModal
                 }
             }
         }
