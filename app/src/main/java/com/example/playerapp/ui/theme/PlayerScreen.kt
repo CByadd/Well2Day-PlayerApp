@@ -211,13 +211,20 @@ fun PlayerScreen(
                             resetCache = false
                         )
                     } else {
-                        assets = emptyList()
+                        // Do not clear assets if we already have cached ones
+                        if (!hasCachedAssets) {
+                            assets = emptyList()
+                        }
                         loading = false
                     }
                 }
             } else {
                 // Not registered or not enabled - but still try to use cached assets for offline playback
-                loading = !hasCachedAssets
+                if (!hasCachedAssets && defaultAsset == null && online) {
+                    loading = true // Keep loading if we are online and waiting for default asset
+                } else {
+                    loading = false
+                }
                 if (!hasCachedAssets) {
                     println("DEBUG: PlayerScreen - Not registered and no cached assets available")
                 } else {
