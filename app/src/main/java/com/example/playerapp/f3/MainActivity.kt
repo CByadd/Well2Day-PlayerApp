@@ -1808,8 +1808,26 @@ fun F3PlayerScreen(
             isPlaylistUpdating = true
             val activeScreenId = screenId
             if (!activeScreenId.isNullOrBlank()) {
-                Repository.getAdscapePlayerInfo(activeScreenId, context) { success, _, _, _, _, _, _, _ ->
+                Repository.getAdscapePlayerInfo(activeScreenId, context) { success, _, _, _, _, _, cal, heightCalibrationEnabledValue ->
                     if (success) {
+                        // Update height calibration
+                        if (cal != null) {
+                            val currentCalibration = HeightCalibrationStorage.getHeightCalibration(context)
+                            if (HeightCalibrationStorage.hasChanged(context, cal)) {
+                                HeightCalibrationStorage.saveHeightCalibration(context, cal)
+                                println("DEBUG: F3 - Socket-updated height calibration: $currentCalibration -> $cal cm")
+                            }
+                            heightCalibration = cal
+                        }
+                        
+                        // Update height calibration enabled
+                        if (heightCalibrationEnabledValue != null) {
+                            if (heightCalibrationEnabled != heightCalibrationEnabledValue) {
+                                println("DEBUG: F3 - Socket-updated height calibration enabled: $heightCalibrationEnabled -> $heightCalibrationEnabledValue")
+                                heightCalibrationEnabled = heightCalibrationEnabledValue
+                            }
+                        }
+                        
                         val persistedDrawerEnabled = InfoStorage.getFlowDrawerEnabled(context)
                         if (persistedDrawerEnabled != null && persistedDrawerEnabled != flowDrawerEnabled) {
                             flowDrawerEnabled = persistedDrawerEnabled
