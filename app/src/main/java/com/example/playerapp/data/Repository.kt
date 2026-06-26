@@ -1405,6 +1405,7 @@ object Repository {
                                     player.optInt("flowDrawerSlotCount", 2)
                                 } else null
                                 val hideScreenId = player.optBoolean("hideScreenId", false)
+                                val hideAppMargin = player.optBoolean("hideAppMargin", false)
                                 println("DEBUG: Repository.getAdscapePlayerInfo - Parsed hideScreenId from API: $hideScreenId")
                                 
                                 // Parse admin-controlled app mode (F1 / F2 / PlayerOnly)
@@ -1440,11 +1441,12 @@ object Repository {
                                         flowDrawerEnabled = flowDrawerEnabled,
                                         flowDrawerSlotCount = flowDrawerSlotCount,
                                         hideScreenId = hideScreenId,
+                                        hideAppMargin = hideAppMargin,
                                         appMode = appMode,
                                         rotation = rotation
                                     )
                                     InfoStorage.saveInfo(ctx, screenInfo)
-                                    println("DEBUG: Repository.getAdscapePlayerInfo - Saved to info.json: screenName=$deviceName, location=$location, heightCalibrationEnabled=$heightCalibrationEnabled, flowDrawerEnabled=$flowDrawerEnabled, flowDrawerSlotCount=$flowDrawerSlotCount, hideScreenId=$hideScreenId, playlistId=$playlistId, paymentAmount=$paymentAmount, appMode=$appMode, rotation=$rotation")
+                                    println("DEBUG: Repository.getAdscapePlayerInfo - Saved to info.json: screenName=$deviceName, location=$location, heightCalibrationEnabled=$heightCalibrationEnabled, flowDrawerEnabled=$flowDrawerEnabled, flowDrawerSlotCount=$flowDrawerSlotCount, hideScreenId=$hideScreenId, hideAppMargin=$hideAppMargin, playlistId=$playlistId, paymentAmount=$paymentAmount, appMode=$appMode, rotation=$rotation")
                                     
                                     // If playlistId is null, immediately clear cached assets to stop playback
                                     if (playlistId == null) {

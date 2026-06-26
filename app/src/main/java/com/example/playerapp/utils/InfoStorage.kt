@@ -23,6 +23,7 @@ import java.io.IOException
             val flowDrawerEnabled: Boolean?,
             val flowDrawerSlotCount: Int?,
             val hideScreenId: Boolean?,
+            val hideAppMargin: Boolean?,
             /** App operating mode pushed by admin: "F1", "F2", or "PlayerOnly" */
             val appMode: String? = null,
             /** Hardware/display rotation of the app: "landscape", "portrait", "reverse_landscape", "reverse_portrait" */
@@ -49,6 +50,7 @@ import java.io.IOException
                 if (info.flowDrawerEnabled != null) put("flowDrawerEnabled", info.flowDrawerEnabled)
                 if (info.flowDrawerSlotCount != null) put("flowDrawerSlotCount", info.flowDrawerSlotCount)
                 if (info.hideScreenId != null) put("hideScreenId", info.hideScreenId)
+                if (info.hideAppMargin != null) put("hideAppMargin", info.hideAppMargin)
                 if (info.appMode != null) put("appMode", info.appMode)
                 if (info.rotation != null) put("rotation", info.rotation)
             }
@@ -108,6 +110,9 @@ import java.io.IOException
                 hideScreenId = if (json.has("hideScreenId") && !json.isNull("hideScreenId")) {
                     json.optBoolean("hideScreenId", false)
                 } else null,
+                hideAppMargin = if (json.has("hideAppMargin") && !json.isNull("hideAppMargin")) {
+                    json.optBoolean("hideAppMargin", false)
+                } else null,
                 appMode = json.optString("appMode", null).takeIf { !it.isNullOrBlank() },
                 rotation = json.optString("rotation", "portrait").takeIf { !it.isNullOrBlank() }
             )
@@ -128,7 +133,7 @@ import java.io.IOException
     fun updateInfo(context: Context, info: ScreenInfo) {
         try {
             // Load existing info first
-            val existingInfo = loadInfo(context) ?: ScreenInfo(null, null, null, null, null, null, null, null, null, null)
+            val existingInfo = loadInfo(context) ?: ScreenInfo(null, null, null, null, null, null, null, null, null, null, null, null)
             
             // Merge with new values (new values take precedence)
             val mergedInfo = ScreenInfo(
@@ -142,6 +147,7 @@ import java.io.IOException
                 flowDrawerEnabled = info.flowDrawerEnabled ?: existingInfo.flowDrawerEnabled,
                 flowDrawerSlotCount = info.flowDrawerSlotCount ?: existingInfo.flowDrawerSlotCount,
                 hideScreenId = info.hideScreenId ?: existingInfo.hideScreenId,
+                hideAppMargin = info.hideAppMargin ?: existingInfo.hideAppMargin,
                 appMode = info.appMode ?: existingInfo.appMode,
                 rotation = info.rotation ?: existingInfo.rotation
             )
@@ -247,6 +253,13 @@ import java.io.IOException
      */
     fun getHideScreenId(context: Context): Boolean? {
         return loadInfo(context)?.hideScreenId
+    }
+
+    /**
+     * Get hide app margin setting from persisted info
+     */
+    fun getHideAppMargin(context: Context): Boolean? {
+        return loadInfo(context)?.hideAppMargin
     }
 
     /**

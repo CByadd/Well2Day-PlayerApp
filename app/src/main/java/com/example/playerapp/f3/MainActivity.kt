@@ -633,11 +633,8 @@ fun F3PlayerScreen(
     var showLogo by remember { mutableStateOf(LogoVisibilityStorage.getShowLogo(context)) }
     
     // Screen ID visibility state - initialize from persisted info (server-controlled)
-    var hideScreenId by remember { 
-        val persistedValue = InfoStorage.getHideScreenId(context)
-        println("DEBUG: F3 - Initializing hideScreenId from persisted info: $persistedValue (defaulting to false if null)")
-        mutableStateOf(persistedValue ?: false)
-    }
+    var hideScreenId by remember { mutableStateOf(InfoStorage.getHideScreenId(context) ?: false) }
+    var hideAppMargin by remember { mutableStateOf(InfoStorage.getHideAppMargin(context) ?: false) }
     
     // Network connectivity state — updated reactively via ConnectivityManager.NetworkCallback
     val isOnlineFlow = remember { observeNetworkState(context) }
@@ -1347,6 +1344,13 @@ fun F3PlayerScreen(
                             println("DEBUG: F3 - Hide screen ID updated from persisted info: $persistedHideScreenId")
                         }
                         
+                        // Update hide app margin status from persisted info
+                        val persistedHideAppMargin = InfoStorage.getHideAppMargin(context)
+                        if (persistedHideAppMargin != null && persistedHideAppMargin != hideAppMargin) {
+                            hideAppMargin = persistedHideAppMargin
+                            println("DEBUG: F3 - Hide app margin updated from persisted info: $persistedHideAppMargin")
+                        }
+                        
                         // Update app mode from persisted info (server saves it to info.json)
                         val persistedAppMode = InfoStorage.getAppMode(context)
                         if (persistedAppMode != null && persistedAppMode != appMode) {
@@ -1855,7 +1859,7 @@ fun F3PlayerScreen(
                         heightCalibration = null, heightCalibrationEnabled = null,
                         playlistId = null, paymentAmount = null,
                         flowDrawerEnabled = null, flowDrawerSlotCount = null,
-                        hideScreenId = null, appMode = newMode
+                        hideScreenId = null, hideAppMargin = null, appMode = newMode
                     )
                 )
                 println("[SOCKET] ✅ App mode updated and persisted: $newMode")
@@ -1875,7 +1879,26 @@ fun F3PlayerScreen(
                         heightCalibration = null, heightCalibrationEnabled = null,
                         playlistId = null, paymentAmount = null,
                         flowDrawerEnabled = null, flowDrawerSlotCount = null,
-                        hideScreenId = newHideStatus, appMode = null
+                        hideScreenId = newHideStatus, hideAppMargin = null, appMode = null
+                    )
+                )
+            }
+        }
+
+        // Real-time hideAppMargin change from admin panel
+        socketManager.setOnHideAppMarginChanged { newHideMarginStatus ->
+            println("[SOCKET] 🔄 Admin pushed new hideAppMargin: $newHideMarginStatus")
+            if (newHideMarginStatus != hideAppMargin) {
+                hideAppMargin = newHideMarginStatus
+                // Persist immediately so it survives app restarts
+                InfoStorage.updateInfo(
+                    context,
+                    InfoStorage.ScreenInfo(
+                        screenId = null, screenName = null, location = null,
+                        heightCalibration = null, heightCalibrationEnabled = null,
+                        playlistId = null, paymentAmount = null,
+                        flowDrawerEnabled = null, flowDrawerSlotCount = null,
+                        hideScreenId = null, hideAppMargin = newHideMarginStatus, appMode = null
                     )
                 )
             }
@@ -1892,7 +1915,7 @@ fun F3PlayerScreen(
                     heightCalibration = null, heightCalibrationEnabled = null,
                     playlistId = null, paymentAmount = null,
                     flowDrawerEnabled = null, flowDrawerSlotCount = null,
-                    hideScreenId = null, appMode = null, rotation = newRotation
+                    hideScreenId = null, hideAppMargin = null, appMode = null, rotation = newRotation
                 )
             )
             println("[ROTATION_CHANGE] Screen rotation updated and persisted: $newRotation")
@@ -1936,6 +1959,13 @@ fun F3PlayerScreen(
                     if (persistedHideScreenId != null && persistedHideScreenId != hideScreenId) {
                         hideScreenId = persistedHideScreenId
                         println("DEBUG: F3 - Initial hide screen ID updated from persisted info: $persistedHideScreenId")
+                    }
+                    
+                    // Update hide app margin status from persisted info
+                    val persistedHideAppMargin = InfoStorage.getHideAppMargin(context)
+                    if (persistedHideAppMargin != null && persistedHideAppMargin != hideAppMargin) {
+                        hideAppMargin = persistedHideAppMargin
+                        println("DEBUG: F3 - Initial hide app margin updated from persisted info: $persistedHideAppMargin")
                     }
                     
                     // Check if the calibration value has changed
@@ -2185,7 +2215,7 @@ fun F3PlayerScreen(
     
     Box(modifier = Modifier
         .fillMaxSize()
-        .padding(10.dp)) {
+        .padding(if (hideAppMargin) 0.dp else 10.dp)) {
         PlayerScreen(
             screenId = screenId, 
             enableBMIFunctionality = false, 

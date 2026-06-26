@@ -45,6 +45,8 @@ class SocketManager(private val context: Context) {
     private var onRotationChanged: ((String) -> Unit)? = null
     /** Fired when the admin panel pushes a new hideScreenId setting */
     private var onHideScreenIdChanged: ((Boolean) -> Unit)? = null
+    /** Fired when the admin panel pushes a new hideAppMargin setting */
+    private var onHideAppMarginChanged: ((Boolean) -> Unit)? = null
     
     /**
      * Connect to Socket.IO server and join screen room
@@ -318,6 +320,22 @@ class SocketManager(private val context: Context) {
                 }
             }
             
+            // Listen for admin-pushed hide app margin changes
+            socket?.on("hide-app-margin-changed") { args ->
+                try {
+                    val data = args.getOrNull(0) as? JSONObject
+                    if (data != null && data.has("hideAppMargin")) {
+                        val newHideMarginStatus = data.getBoolean("hideAppMargin")
+                        println("[SOCKET] 🔄 hide-app-margin-changed received: hideAppMargin=$newHideMarginStatus")
+                        Handler(Looper.getMainLooper()).post {
+                            onHideAppMarginChanged?.invoke(newHideMarginStatus)
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("[SOCKET] ❌ Error processing hide-app-margin-changed: ${e.message}")
+                }
+            }
+            
             // Listen for admin-pushed rotation changes
             socket?.on("screen-rotation-changed") { args ->
                 try {
@@ -478,6 +496,13 @@ class SocketManager(private val context: Context) {
      */
     fun setOnHideScreenIdChanged(callback: (Boolean) -> Unit) {
         this.onHideScreenIdChanged = callback
+    }
+    
+    /**
+     * Set callback for admin-pushed hide app margin changes.
+     */
+    fun setOnHideAppMarginChanged(callback: (Boolean) -> Unit) {
+        this.onHideAppMarginChanged = callback
     }
     
     /**
