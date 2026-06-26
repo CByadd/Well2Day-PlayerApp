@@ -940,14 +940,14 @@ fun F3PlayerScreen(
         val activeFlowSessionId = flowSessionId + 1
         flowSessionId = activeFlowSessionId
         
-        // Check 5 second interval between flows
+        // Check 0 second interval between flows (Immediate processing)
         val currentTime = System.currentTimeMillis()
         if (lastFlowEndTime != null) {
             val timeSinceLastFlow = currentTime - lastFlowEndTime!!
-            val minIntervalMs = 5000L // 5 seconds
+            val minIntervalMs = 0L // 0 seconds
             if (timeSinceLastFlow < minIntervalMs) {
                 val remainingSeconds = ((minIntervalMs - timeSinceLastFlow) / 1000f).coerceAtLeast(0f)
-                println("DEBUG: F3 - Flow cooldown active: ${String.format("%.1f", remainingSeconds)}s remaining (need 5s between flows)")
+                println("DEBUG: F3 - Flow cooldown active: ${String.format("%.1f", remainingSeconds)}s remaining (need 0s between flows)")
                 return // Still in cooldown period
             }
         }
@@ -996,10 +996,9 @@ fun F3PlayerScreen(
         println("[PAYMENT_FLOW] Flow Type: $flowType")
         println("═══════════════════════════════════════════════════════════════")
         
-        // Mark flow as active and capture RAW values
         isFlowActive = true
         capturedWeight = weight
-        capturedHeight = if (isHeightValid) height else 0f // Store 0 if height is invalid
+        capturedHeight = if (isHeightValid) calibratedHeight else 0f // Store 0 if height is invalid
         
         // Keep USB connected to monitor weight continuously
         // Flow will terminate if weight drops below 5kg
@@ -1042,7 +1041,7 @@ fun F3PlayerScreen(
         // Create initial BMI data map with calculated values (webUrl will be added when server responds)
         val initialBmiDataMap = mutableMapOf<String, Any>(
             "weight" to weight as Any, // Raw weight
-            "height" to (if (isHeightValid) height else 0f) as Any, // Raw height or 0
+            "height" to (if (isHeightValid) calibratedHeight else 0f) as Any, // Calibrated height or 0
             "timestamp" to System.currentTimeMillis() as Any,
             "source" to "USB_SENSOR" as Any,
             "screenId" to screenId as Any,
@@ -1098,11 +1097,11 @@ fun F3PlayerScreen(
             }
         }
         
-        // Call server API to create BMI record with RAW height and weight; send locally-picked fortune/healthTip so they are stored in DB
-        println("[PAYMENT_FLOW] 📤 Calling Repository.createBMI - Creating BMI record on server with RAW data...")
+        // Call server API to create BMI record with CALIBRATED height and weight; send locally-picked fortune/healthTip so they are stored in DB
+        println("[PAYMENT_FLOW] 📤 Calling Repository.createBMI - Creating BMI record on server with CALIBRATED data...")
         println("[PAYMENT_FLOW] ⚡ Fast QR generation mode - targeting 1 second response time")
         Repository.createBMI(
-            heightCm = if (isHeightValid) height else null, // Omit height in weight-only mode
+            heightCm = if (isHeightValid) calibratedHeight else null, // Omit height in weight-only mode
             weightKg = weight, // Use raw weight
             screenId = screenId,
             appVersion = flowType ?: "F3",
@@ -1257,7 +1256,7 @@ fun F3PlayerScreen(
                     val bmiDao = database.bmiDao()
                     val entity = BmiEntity(
                         userId = null,
-                        height = (if (isHeightValid) height else 0f).toDouble(),
+                        height = (if (isHeightValid) calibratedHeight else 0f).toDouble(),
                         weight = weight.toDouble(),
                         bmi = if (isHeightValid) bmi.toDouble() else 0.0,
                         category = if (isHeightValid) bmiCategory else "Weight Only",
@@ -2030,8 +2029,9 @@ fun F3PlayerScreen(
                 return@setOnSensorDataReceived
             }
 
-            // If BMI is triggered while offline, show a lightweight toast instead of blocking overlays.
-            if (isOffline && !isFlowActive) {
+            // If BMI is triggered while offline, show a lightweight toast instead of blocking overlays (F1 only).
+            // F2 mode should process BMI offline.
+            if (isOffline && !isFlowActive && !isF2ModeActive) {
                 if (weight >= 3.0f) {
                     if (bottomToastMessage == null) {
                         println("DEBUG: F3 - Offline trigger detected, showing bottom toast")
@@ -2076,15 +2076,15 @@ fun F3PlayerScreen(
                             println("DEBUG: F3 - Low weight detected (${weight}kg), waiting for confirmation...")
                         }
                         
-                        // Terminate when user steps off, providing a fast 1.5s stability debounce 
+                        // Terminate when user steps off immediately
                         // to prevent transient sensor glitches from abruptly killing the active flow.
                         val fortuneGraceActive = paymentFlowState == PaymentFlowState.FORTUNE_SHOWING &&
                             fortuneShownTimestamp != null &&
                             (now - fortuneShownTimestamp!!) < 3000L
                             
                         val lowDuration = now - lowWeightDetectedAt!!
-                        if (lowDuration >= 1500L && !fortuneGraceActive) {
-                             println("DEBUG: F3 - User stepped off securely (1.5s confirmed), terminating flow")
+                        if (lowDuration >= 0L && !fortuneGraceActive) {
+                             println("DEBUG: F3 - User stepped off securely (0s confirmed), terminating flow")
                              lastFlowEndTime = now
                              resetPaymentFlow("User stepped off (stabilized)")
                              lowWeightDetectedAt = null
@@ -2112,9 +2112,19 @@ fun F3PlayerScreen(
                     
                     // Show loading indicator when detection starts (before modal shows)
                     if (!isDetectingBMI && !isFlowActive && paymentFlowState == PaymentFlowState.IDLE) {
-                        isDetectingBMI = true
-                        paymentFlowState = PaymentFlowState.DETECTING // INSTANT FEEDBACK
-                        println("DEBUG: F3 - ⚡ DETECTION STARTED: Valid reading detected (weight=$weight kg), showing instant processing UI...")
+                        val currentTime = System.currentTimeMillis()
+                        val cooldownActive = lastFlowEndTime != null && (currentTime - lastFlowEndTime!! < 0L)
+                        
+                        if (!cooldownActive) {
+                            isDetectingBMI = true
+                            paymentFlowState = PaymentFlowState.DETECTING // INSTANT FEEDBACK
+                            println("DEBUG: F3 - ⚡ DETECTION STARTED: Valid reading detected (weight=$weight kg), showing instant processing UI...")
+                        } else {
+                            val remaining = ((0L - (currentTime - lastFlowEndTime!!)) / 1000f).coerceAtLeast(0f)
+                            if (bottomToastMessage == null || !bottomToastMessage!!.contains("wait")) {
+                                bottomToastMessage = "Please wait ${String.format("%.0f", remaining)}s before next reading"
+                            }
+                        }
                     }
                 } else {
                     // Hide loading if weight drops back down while trying to detect
@@ -2157,8 +2167,8 @@ fun F3PlayerScreen(
                         fortuneShownTimestamp != null &&
                         (now - fortuneShownTimestamp!!) < 3000L
                     
-                    // Respond to step off securely (1.5s debounce to prevent flapping and allow user to shift weight while paying)
-                    if (lowWeightDuration >= 1500L && !fortuneGraceActive) {
+                    // Respond to step off securely (instant debounce to allow immediate next user)
+                    if (lowWeightDuration >= 0L && !fortuneGraceActive) {
                         println("DEBUG: F3 - Stale flow detected: Low weight (<3kg) for ${lowWeightDuration}ms")
                         lastFlowEndTime = now
                         resetPaymentFlow("User stepped off (sustained low weight)")
