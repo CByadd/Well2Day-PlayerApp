@@ -10,16 +10,21 @@ class BootReceiver : BroadcastReceiver() {
         val action = intent.action ?: return
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_LOCKED_BOOT_COMPLETED) return
 
-        try {
-            val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
-                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            if (launch != null) {
-                context.startActivity(launch)
-            } else {
-                Log.w("BootReceiver", "No launch intent for package")
+        val pendingResult = goAsync()
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try {
+                val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+                    ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                if (launch != null) {
+                    context.startActivity(launch)
+                } else {
+                    Log.w("BootReceiver", "No launch intent for package")
+                }
+            } catch (t: Throwable) {
+                Log.e("BootReceiver", "Failed to start app on boot: ${t.message}", t)
+            } finally {
+                pendingResult.finish()
             }
-        } catch (t: Throwable) {
-            Log.e("BootReceiver", "Failed to start app on boot: ${t.message}", t)
-        }
+        }, 3000)
     }
 }

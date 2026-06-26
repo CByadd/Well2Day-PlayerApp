@@ -187,13 +187,29 @@ class UsbSerialManager(private val context: Context) {
         
         for (driver in availableDrivers) {
             val device = driver.device
+            
+            // Auto-grant permission using system privileges (since we have MANAGE_USB)
+            try {
+                val grantMethod = usbManager.javaClass.getMethod("grantPermission", UsbDevice::class.java)
+                grantMethod.invoke(usbManager, device)
+                Log.d(TAG, "Auto-granted USB permission via reflection")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to auto-grant USB permission: \${e.message}")
+                try {
+                    val grantMethod2 = usbManager.javaClass.getMethod("grantPermission", UsbDevice::class.java, String::class.java)
+                    grantMethod2.invoke(usbManager, device, context.packageName)
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Failed auto-grant fallback: \${e2.message}")
+                }
+            }
+
             if (usbManager.hasPermission(device)) {
                 connectToDevice(device)
             } else {
                 val permissionIntent = PendingIntent.getBroadcast(
                     context, 0,
                     Intent(ACTION_USB_PERMISSION),
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0
                 )
                 usbManager.requestPermission(device, permissionIntent)
             }

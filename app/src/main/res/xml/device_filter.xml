@@ -3,27 +3,32 @@
     <!-- USB device filter for BMI machine sensors -->
     <!-- This allows the app to detect and connect to USB serial devices -->
     
-    <!-- Generic USB Serial devices (FTDI, CH340, CP210x, etc.) -->
-    <!-- Most BMI machines use these common USB-to-Serial chips -->
+    <!-- Arduino devices (Used in this specific BMI machine) -->
+    <usb-device vendor-id="9025" product-id="67" /> <!-- Arduino Uno Rev3 -->
     
-    <!-- FTDI devices (common in many USB serial adapters) -->
-    <usb-device vendor-id="1027" />
+    <!-- FTDI devices -->
+    <usb-device vendor-id="1027" product-id="24577" /> <!-- 0x0403 / 0x6001 -->
+    <usb-device vendor-id="1027" product-id="24592" /> <!-- 0x0403 / 0x6010 -->
+    <usb-device vendor-id="1027" product-id="24593" /> <!-- 0x0403 / 0x6011 -->
+    <usb-device vendor-id="1027" product-id="24597" /> <!-- 0x0403 / 0x6015 -->
     
-    <!-- CH340/CH341 devices (very common in Chinese USB serial adapters) -->
-    <usb-device vendor-id="6790" />
+    <!-- CH340/CH341 devices -->
+    <usb-device vendor-id="6790" product-id="29987" /> <!-- 0x1A86 / 0x7523 -->
+    <usb-device vendor-id="6790" product-id="21795" /> <!-- 0x1A86 / 0x5523 -->
+    <usb-device vendor-id="6790" /> <!-- Fallback for other CH340 -->
     
     <!-- Prolific PL2303 devices -->
-    <usb-device vendor-id="1659" />
+    <usb-device vendor-id="1659" product-id="8963" /> <!-- 0x067B / 0x2303 -->
+    <usb-device vendor-id="1659" /> <!-- Fallback for other Prolific -->
     
     <!-- Silicon Labs CP210x devices -->
-    <usb-device vendor-id="4292" />
+    <usb-device vendor-id="4292" product-id="60000" /> <!-- 0x10C4 / 0xEA60 -->
+    <usb-device vendor-id="4292" product-id="60016" /> <!-- 0x10C4 / 0xEA70 -->
+    <usb-device vendor-id="4292" /> <!-- Fallback for other CP210x -->
     
-    <!-- Generic CDC ACM devices -->
-    <usb-device class="2" />
-    
-    <!-- Allow any USB serial device (fallback) -->
-    <!-- This ensures compatibility with various BMI sensor manufacturers -->
+    <!-- Generic and Catch-All USB devices -->
+    <usb-device class="0" />   <!-- Class defined at interface level -->
+    <usb-device class="2" subclass="2" /> <!-- CDC ACM -->
+    <usb-device class="2" />   <!-- Generic CDC -->
+    <usb-device class="255" /> <!-- Vendor specific -->
 </resources>
-
-
-
