@@ -32,7 +32,98 @@ import java.util.*
 //const val BASE_URL = "https://wan-changeable-efferently.ngrok-free.dev/api"
 const val BASE_URL = "https://api.well2day.in/api"
 //const val BASE_URL = " https://relieved-sparrow-fairly.ngrok-free.app/api" // Removed leading space
+
+/**
+ * Lightweight ETag / Last-Modified cache for HTTP conditional requests.
+ *
+ * Backed by [filesDir]/asset_meta.json.  Must call [load] once with a Context
+ * before first use (typically right after asset fetch begins).  [putMeta] saves
+ * to disk immediately so state survives process restarts.
+ *
+ * Thread-safety: all access is synchronized on the object.
+ */
+object AssetMetaStore {
+    private const val META_FILE = "asset_meta.json"
+    private val meta = HashMap<String, Pair<String?, String?>>() // url → (etag, lastModified)
+    private var context: android.content.Context? = null
+
+    /** Initialise once from Repository; safe to call multiple times. */
+    fun init(ctx: android.content.Context) {
+        synchronized(this) {
+            if (context != null) return
+            context = ctx.applicationContext
+            load(ctx)
+        }
+    }
+
+    private fun load(ctx: android.content.Context) {
+        runCatching {
+            val file = File(ctx.applicationContext.filesDir, META_FILE)
+            if (!file.exists()) return
+            val obj = JSONObject(file.readText())
+            obj.keys().forEach { rawKey ->
+                val url = rawKey?.toString() ?: return@forEach
+                val entry = obj.optJSONObject(url) ?: return@forEach
+                meta[url] = Pair(
+                    entry.optString("etag").takeIf { it.isNotEmpty() },
+                    entry.optString("lastModified").takeIf { it.isNotEmpty() }
+                )
+            }
+            println("DEBUG: AssetMetaStore - Loaded ${meta.size} cache entries")
+        }.onFailure {
+            println("DEBUG: AssetMetaStore - Load failed: ${it.message}")
+        }
+    }
+
+    fun getMeta(url: String): Pair<String?, String?> = synchronized(this) {
+        meta[url] ?: Pair(null, null)
+    }
+
+    fun putMeta(url: String, etag: String?, lastModified: String?) {
+        synchronized(this) {
+            meta[url] = Pair(etag, lastModified)
+            save()
+        }
+    }
+
+    private fun save() {
+        val ctx = context ?: return
+        runCatching {
+            val obj = JSONObject()
+            meta.forEach { (url, pair) ->
+                obj.put(url, JSONObject().apply {
+                    put("etag", pair.first ?: JSONObject.NULL)
+                    put("lastModified", pair.second ?: JSONObject.NULL)
+                })
+            }
+            File(ctx.filesDir, META_FILE).writeText(obj.toString())
+        }.onFailure {
+            println("DEBUG: AssetMetaStore - Save failed: ${it.message}")
+        }
+    }
+
+    /** Remove stale entries whose local files no longer exist. */
+    fun pruneStale(activePaths: Set<String>) {
+        synchronized(this) {
+            val staleUrls = meta.keys.filter { url ->
+                activePaths.none { path -> path.contains(shortHash(url)) }
+            }
+            if (staleUrls.isNotEmpty()) {
+                staleUrls.forEach { meta.remove(it) }
+                save()
+                println("DEBUG: AssetMetaStore - Pruned ${staleUrls.size} stale entries")
+            }
+        }
+    }
+
+    private fun shortHash(value: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+        return digest.take(8).joinToString("") { "%02x".format(it) }
+    }
+}
+
 object Repository {
+
     private const val ASSET_DOWNLOAD_CONCURRENCY = 4
     private val SERVER_ROOT_URL = BASE_URL.removeSuffix("/api").trimEnd('/')
 
@@ -114,6 +205,7 @@ object Repository {
     }
 
     fun fetchAssets(context: Context, screenId: String, onResult: (List<Asset>?, String?) -> Unit) {
+        AssetMetaStore.init(context) // ensure ETag cache is loaded before downloads
         fetchAssetsWithRetry(context, screenId, null, 0, 3, onResult)
     }
     
@@ -340,70 +432,120 @@ object Repository {
         })
     }
 
+    /**
+     * Network-optimized asset download with HTTP conditional requests.
+     *
+     * NETWORK BUG FIX: The previous implementation unconditionally deleted the
+     * local file before every download (lines 347–350), meaning every app refresh
+     * re-downloaded ALL assets even when nothing changed on the server.
+     *
+     * New behaviour:
+     *  - If the local file already exists, send If-None-Match / If-Modified-Since.
+     *  - HTTP 304 Not Modified → skip download, log "cache hit", return immediately.
+     *  - HTTP 200 → download fresh copy, save ETag/Last-Modified to AssetMetaStore.
+     *  - On a failed download the existing good local file is preserved (not deleted).
+     *  - Only partial/temp files are cleaned up on failure.
+     */
     private fun downloadAssetWithRetry(url: String, localFile: File, maxRetries: Int) {
         var attempt = 0
         var lastException: Exception? = null
-        
-        // Always delete existing file to ensure fresh download
-        if (localFile.exists()) {
-            val deleted = localFile.delete()
-            println("DEBUG: Repository.downloadAsset - Deleted existing file for fresh download: ${localFile.absolutePath}, deleted: $deleted")
+
+        // ── Conditional request headers (cache-hit fast path) ─────────────────
+        val (cachedEtag, cachedLastModified) = AssetMetaStore.getMeta(url)
+        if (localFile.exists() && localFile.length() > 0) {
+            if (!cachedEtag.isNullOrBlank() || !cachedLastModified.isNullOrBlank()) {
+                try {
+                    val reqBuilder = Request.Builder().url(url)
+                    if (!cachedEtag.isNullOrBlank())         reqBuilder.header("If-None-Match", cachedEtag)
+                    if (!cachedLastModified.isNullOrBlank()) reqBuilder.header("If-Modified-Since", cachedLastModified)
+                    assetDownloadClient.newCall(reqBuilder.build()).execute().use { resp ->
+                        if (resp.code == 304) {
+                            println("DEBUG: Repository.downloadAsset - \uD83D\uDFE2 Cache hit (304 Not Modified), reusing local file: ${localFile.name}")
+                            return // file is still valid, no download needed
+                        }
+                        // 200 or other: fall through to full download below
+                        println("DEBUG: Repository.downloadAsset - Server returned ${resp.code}, proceeding with download")
+                    }
+                } catch (e: Exception) {
+                    // Conditional check failed (network timeout etc.) — fall through to full download
+                    println("DEBUG: Repository.downloadAsset - Conditional check failed: ${e.message}, will attempt full download")
+                }
+            } else {
+                // File exists but no ETag stored yet — use Content-Length comparison as lightweight check
+                try {
+                    val headReq = Request.Builder().url(url).head().build()
+                    assetDownloadClient.newCall(headReq).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val serverLen = resp.header("Content-Length")?.toLongOrNull() ?: -1L
+                            if (serverLen > 0 && serverLen == localFile.length()) {
+                                println("DEBUG: Repository.downloadAsset - \uD83D\uDFE2 Content-Length match (${serverLen}B), reusing local file: ${localFile.name}")
+                                // Save ETag if server sent one now
+                                val etag = resp.header("ETag")
+                                val lm   = resp.header("Last-Modified")
+                                if (!etag.isNullOrBlank() || !lm.isNullOrBlank()) {
+                                    AssetMetaStore.putMeta(url, etag, lm)
+                                }
+                                return
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("DEBUG: Repository.downloadAsset - HEAD check failed: ${e.message}, proceeding with download")
+                }
+            }
         }
-        
+
         while (attempt < maxRetries) {
             try {
                 attempt++
-                println("DEBUG: Repository.downloadAsset - Fresh download attempt $attempt/$maxRetries for $url")
+                println("DEBUG: Repository.downloadAsset - Download attempt $attempt/$maxRetries for $url")
                 var downloadSucceeded = false
-                
+
                 // Ensure parent directory exists
                 localFile.parentFile?.mkdirs()
-                
+
                 val req = Request.Builder().url(url).build()
                 assetDownloadClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) {
                         throw IOException("HTTP ${resp.code}: ${resp.message}")
                     }
                     val body = resp.body ?: throw IOException("Empty response body")
-                    
+
+                    // Save ETag / Last-Modified for next check
+                    val newEtag = resp.header("ETag")
+                    val newLm   = resp.header("Last-Modified")
+                    if (!newEtag.isNullOrBlank() || !newLm.isNullOrBlank()) {
+                        AssetMetaStore.putMeta(url, newEtag, newLm)
+                    }
+
                     // Get expected content length for verification
                     val expectedLength = body.contentLength()
                     println("DEBUG: Repository.downloadAsset - Expected file size: $expectedLength bytes")
-                    
                     if (expectedLength <= 0) {
                         println("DEBUG: Repository.downloadAsset - Warning: Server did not provide content length")
                     }
-                    
+
                     // Download with integrity verification
                     var downloadedBytes = 0L
                     var lastProgressLog = 0L
                     val tempFile = File(localFile.absolutePath + ".tmp")
-                    
-                    // Delete temp file if exists
-                    if (tempFile.exists()) {
-                        tempFile.delete()
-                    }
-                    
+                    if (tempFile.exists()) tempFile.delete()
+
                     body.byteStream().use { input ->
                         tempFile.outputStream().use { sink ->
-                            val buffer = ByteArray(16384) // 16KB buffer for better performance
+                            val buffer = ByteArray(16384) // 16KB buffer
                             var bytesRead: Int
-                            
                             while (input.read(buffer).also { bytesRead = it } != -1) {
                                 if (bytesRead > 0) {
                                     sink.write(buffer, 0, bytesRead)
                                     downloadedBytes += bytesRead
-                                    
-                                    // Log progress every 10% or every 5MB
-                                    val progressPercent = if (expectedLength > 0) {
-                                        (downloadedBytes * 100 / expectedLength).toInt()
-                                    } else 0
-                                    
+
+                                    val progressPercent = if (expectedLength > 0)
+                                        (downloadedBytes * 100 / expectedLength).toInt() else 0
                                     val shouldLog = (expectedLength > 0 && progressPercent > lastProgressLog + 10) ||
                                                    (downloadedBytes - lastProgressLog * 1024 * 1024 > 5)
-                                    
                                     if (shouldLog) {
-                                        println("DEBUG: Repository.downloadAsset - Progress: $progressPercent% ($downloadedBytes/${expectedLength}L bytes)")
+                                        println("DEBUG: Repository.downloadAsset - Progress: $progressPercent% ($downloadedBytes/${expectedLength} bytes)")
                                         lastProgressLog = if (expectedLength > 0) progressPercent.toLong() else (downloadedBytes / (1024 * 1024))
                                     }
                                 }
@@ -411,36 +553,23 @@ object Repository {
                             sink.flush()
                         }
                     }
-                    
-                    // Verify download integrity
-                    if (tempFile.length() == 0L) {
-                        throw IOException("Downloaded file is empty")
-                    }
-                    
-                    // If we have expected length, verify it matches exactly
+
+                    if (tempFile.length() == 0L) throw IOException("Downloaded file is empty")
                     if (expectedLength > 0 && tempFile.length() != expectedLength) {
-                        val actualLength = tempFile.length()
-                        throw IOException("Download incomplete: expected $expectedLength bytes, got $actualLength bytes")
+                        throw IOException("Download incomplete: expected $expectedLength bytes, got ${tempFile.length()} bytes")
                     }
-                    
-                    // Verify file can be read (basic corruption check)
-                    try {
-                        tempFile.inputStream().use { input ->
-                            // Try to read first few bytes to check file integrity
-                            val testBuffer = ByteArray(1024)
-                            val bytesRead = input.read(testBuffer)
-                            if (bytesRead == -1) {
-                                throw IOException("File appears corrupted - cannot read any data")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        throw IOException("File corruption detected: ${e.message}")
+
+                    // Basic corruption check
+                    tempFile.inputStream().use { input ->
+                        val testBuffer = ByteArray(1024)
+                        if (input.read(testBuffer) == -1) throw IOException("File appears corrupted")
                     }
-                    
-                    // Atomic move from temp to final location
+
+                    // Atomic move: delete old ONLY now that we have a verified replacement
+                    if (localFile.exists()) localFile.delete()
                     if (tempFile.renameTo(localFile)) {
                         val finalLength = localFile.length()
-                        println("DEBUG: Repository.downloadAsset - Successfully downloaded and verified: ${localFile.absolutePath} ($finalLength bytes)")
+                        println("DEBUG: Repository.downloadAsset - \u2705 Downloaded: ${localFile.name} ($finalLength bytes)")
                         downloadSucceeded = finalLength > 0
                     } else {
                         throw IOException("Failed to move temp file to final location")
@@ -454,32 +583,31 @@ object Repository {
                 }
             } catch (ex: Exception) {
                 lastException = ex
-                println("DEBUG: Repository.downloadAsset - Download attempt $attempt failed: ${ex.message}")
-                
-                // Clean up partial files
+                println("DEBUG: Repository.downloadAsset - Attempt $attempt failed: ${ex.message}")
+
+                // Clean up partial/temp files only — do NOT delete the existing good local file
                 val tempFile = File(localFile.absolutePath + ".tmp")
                 if (tempFile.exists()) {
                     tempFile.delete()
-                    println("DEBUG: Repository.downloadAsset - Deleted temp file: ${tempFile.absolutePath}")
+                    println("DEBUG: Repository.downloadAsset - Cleaned up temp file: ${tempFile.name}")
                 }
-                
-                if (localFile.exists()) {
-                    localFile.delete()
-                    println("DEBUG: Repository.downloadAsset - Deleted partial file: ${localFile.absolutePath}")
-                }
-                
+
                 if (attempt < maxRetries) {
-                    val retryDelay = minOf(attempt * 2000L, 10000L) // Cap retry delay at 10 seconds
+                    val retryDelay = minOf(attempt * 2000L, 10000L)
                     println("DEBUG: Repository.downloadAsset - Retrying in ${retryDelay}ms...")
                     Thread.sleep(retryDelay)
                 }
             }
         }
-        
+
+        // All attempts failed — if we still have a good local file, use it silently
+        if (localFile.exists() && localFile.length() > 0) {
+            println("DEBUG: Repository.downloadAsset - \uD83D\uDFE1 Download failed after $maxRetries attempts, falling back to existing local file: ${localFile.name}")
+            return
+        }
+
         println("DEBUG: Repository.downloadAsset - All download attempts failed for $url")
-        println("DEBUG: Repository.downloadAsset - Last exception: ${lastException?.javaClass?.simpleName}")
-        println("DEBUG: Repository.downloadAsset - Last exception message: ${lastException?.message}")
-        println("DEBUG: Repository.downloadAsset - Last exception stack trace: ${lastException?.stackTraceToString()}")
+        println("DEBUG: Repository.downloadAsset - Last exception: ${lastException?.javaClass?.simpleName}: ${lastException?.message}")
         throw IOException("Failed to download after $maxRetries attempts: ${lastException?.message ?: "Unknown error"}", lastException)
     }
 
@@ -494,7 +622,12 @@ object Repository {
                 println("DEBUG: Repository.fetchAssets - Failed to download asset for slot ${remoteAsset.slotNumber}: ${e.message}")
             }
         } else {
-            println("DEBUG: Repository.fetchAssets - Reusing staged cached file for slot ${remoteAsset.slotNumber}: ${localFile.name}")
+            // File exists — downloadAssetWithRetry will handle the conditional check internally
+            try {
+                downloadAssetWithRetry(remoteAsset.originalUrl ?: remoteAsset.assetUrl, localFile, 3)
+            } catch (e: Exception) {
+                println("DEBUG: Repository.fetchAssets - Refresh check failed for slot ${remoteAsset.slotNumber}, using existing: ${localFile.name}")
+            }
         }
 
         val finalUrl = if (localFile.exists()) localFile.absolutePath else (remoteAsset.originalUrl ?: remoteAsset.assetUrl)

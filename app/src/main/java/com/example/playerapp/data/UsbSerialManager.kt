@@ -10,6 +10,13 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.util.Log
+import com.hoho.android.usbserial.driver.CdcAcmSerialDriver
+import com.hoho.android.usbserial.driver.Ch34xSerialDriver
+import com.hoho.android.usbserial.driver.Cp21xxSerialDriver
+import com.hoho.android.usbserial.driver.FtdiSerialDriver
+import com.hoho.android.usbserial.driver.ProbeTable
+import com.hoho.android.usbserial.driver.ProlificSerialDriver
+import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import com.hoho.android.usbserial.util.SerialInputOutputManager
@@ -87,6 +94,36 @@ class UsbSerialManager(private val context: Context) {
         /** Valid height range in cm — outside this range height is reported as 0. */
         private const val MIN_HEIGHT_CM = 140f
         private const val MAX_HEIGHT_CM = 200f
+
+        /**
+         * USB device classes that are definitely NOT serial/BMI devices.
+         *
+         * Crash loop root-cause: a 2.4 GHz wireless USB dongle (HID class 3) was
+         * accepted by probeFallbackDriver (it returned CdcAcmSerialDriver for ANY
+         * unknown device).  connectToDriver then called port.open() on a HID device
+         * which threw RuntimeException (NOT IOException), was uncaught, killed the
+         * process, and CrashRestartHandler restarted in 2 s — dongle still attached
+         * → infinite crash loop.
+         *
+         * These USB class codes are filtered out BEFORE any driver probe:
+         *  3  = HID (keyboard, mouse, wireless HID receiver — e.g. 2.4 GHz dongles)
+         *  9  = Hub
+         *  7  = Printer
+         *  6  = Imaging (camera, scanner)
+         *  8  = Mass Storage
+         *  11 = Smart Card (0x0B)
+         *  14 = Video (0x0E)
+         *  15 = Personal Healthcare (0x0F)
+         *  0xE0 = Wireless Controller (Bluetooth, UWB, RNDIS)
+         *  0xEF = Miscellaneous (IAD device with Ethernet etc.)
+         */
+        private val NON_SERIAL_DEVICE_CLASSES = setOf(3, 6, 7, 8, 9, 11, 14, 15, 0xE0, 0xEF)
+
+        /**
+         * USB interface classes that identify a non-serial interface.
+         * Used in probeFallbackDriver to avoid assigning CDC drivers to HID interfaces.
+         */
+        private val NON_SERIAL_INTERFACE_CLASSES = setOf(3, 6, 7, 8, 9, 11, 14, 15, 0xE0)
     }
 
     // ── USB / serial infrastructure ──────────────────────────────────────────
@@ -95,7 +132,9 @@ class UsbSerialManager(private val context: Context) {
     private var serialPort: UsbSerialPort? = null
     private var usbConnection: UsbDeviceConnection? = null
     private var serialIoManager: SerialInputOutputManager? = null
-    private val executor = Executors.newSingleThreadExecutor()
+    private val executor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "usb-serial-io").apply { isDaemon = true }
+    }
 
     /** Accumulates bytes until a full newline-terminated line is received. */
     private val dataBuffer = StringBuilder()
@@ -103,8 +142,66 @@ class UsbSerialManager(private val context: Context) {
     private val _usbStatusFlow = MutableStateFlow(UsbStatus())
     val usbStatusFlow: StateFlow<UsbStatus> = _usbStatusFlow.asStateFlow()
 
+    private val customProber: UsbSerialProber by lazy {
+        val customTable = UsbSerialProber.getDefaultProbeTable()
+
+        // WCH CH340 / CH341 / CH9102 / CH347 (used on 90%+ of Arduino clones)
+        customTable.addProduct(0x1A86, 0x7523, Ch34xSerialDriver::class.java)
+        customTable.addProduct(0x1A86, 0x5523, Ch34xSerialDriver::class.java)
+        customTable.addProduct(0x1A86, 0x5512, Ch34xSerialDriver::class.java)
+        customTable.addProduct(0x1A86, 0x7522, Ch34xSerialDriver::class.java)
+        customTable.addProduct(0x1A86, 0x7524, Ch34xSerialDriver::class.java)
+        customTable.addProduct(0x1A86, 0x5584, Ch34xSerialDriver::class.java) // CH9102
+
+        // Arduino CDC ACM (Uno R3/R4, Mega, Leonardo, Micro, Nano Every, Nano BLE/IoT, Due, Zero, MKR)
+        customTable.addProduct(0x2341, 0x0043, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x0010, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x0042, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x0036, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x8036, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x0037, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x8037, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x003d, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x003e, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x804d, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x804e, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x0058, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x005a, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x0057, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x0069, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x006a, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2A03, 0x0043, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2A03, 0x0042, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x239A, 0x800B, CdcAcmSerialDriver::class.java) // Adafruit
+        customTable.addProduct(0x1B4F, 0x9256, CdcAcmSerialDriver::class.java) // Sparkfun
+        customTable.addProduct(0x16C0, 0x0483, CdcAcmSerialDriver::class.java) // Teensy
+        customTable.addProduct(0x0483, 0x5740, CdcAcmSerialDriver::class.java) // STM32
+        customTable.addProduct(0x2E8A, 0x000A, CdcAcmSerialDriver::class.java) // Raspberry Pi Pico
+        customTable.addProduct(0x303A, 0x1001, CdcAcmSerialDriver::class.java) // ESP32-S2/S3
+
+        // FTDI variations
+        customTable.addProduct(0x0403, 0x6001, FtdiSerialDriver::class.java)
+        customTable.addProduct(0x0403, 0x6010, FtdiSerialDriver::class.java)
+        customTable.addProduct(0x0403, 0x6011, FtdiSerialDriver::class.java)
+        customTable.addProduct(0x0403, 0x6014, FtdiSerialDriver::class.java)
+        customTable.addProduct(0x0403, 0x6015, FtdiSerialDriver::class.java)
+
+        // CP210x variations
+        customTable.addProduct(0x10C4, 0xEA60, Cp21xxSerialDriver::class.java)
+        customTable.addProduct(0x10C4, 0xEA70, Cp21xxSerialDriver::class.java)
+        customTable.addProduct(0x10C4, 0xEA71, Cp21xxSerialDriver::class.java)
+        customTable.addProduct(0x10C4, 0xEA80, Cp21xxSerialDriver::class.java)
+
+        // PL2303 variations
+        customTable.addProduct(0x067B, 0x2303, ProlificSerialDriver::class.java)
+        customTable.addProduct(0x067B, 0x23A3, ProlificSerialDriver::class.java)
+        customTable.addProduct(0x067B, 0x2323, ProlificSerialDriver::class.java)
+
+        UsbSerialProber(customTable)
+    }
+
     private fun updateDeviceList() {
-        val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
+        val availableDrivers = customProber.findAllDrivers(usbManager)
         val devices = availableDrivers.map { driver ->
             val dev = driver.device
             UsbDeviceInfo(
@@ -118,6 +215,7 @@ class UsbSerialManager(private val context: Context) {
         val arduinoCount = devices.count { it.isConnected }
         _usbStatusFlow.update { it.copy(availablePorts = devices, connectedArduinosCount = arduinoCount) }
     }
+
 
     // ── Reference-algorithm state ─────────────────────────────────────────────
 
@@ -224,14 +322,46 @@ class UsbSerialManager(private val context: Context) {
     }
 
     fun findAndConnectDevice() {
-        val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
+        val availableDrivers = customProber.findAllDrivers(usbManager)
         if (availableDrivers.isEmpty()) {
-            Log.d(TAG, "No USB serial drivers found")
+            Log.d(TAG, "No USB serial drivers found via probe table; checking raw USB devices...")
+        }
+
+        // Get driver list from prober, plus fallback probe for attached USB devices.
+        // Non-serial class devices (HID, wireless, hub, etc.) are filtered BEFORE
+        // fallback probing to avoid the crash loop caused by attempting to open them.
+        val driverList = mutableListOf<UsbSerialDriver>()
+        driverList.addAll(availableDrivers)
+
+        for (device in usbManager.deviceList.values) {
+            if (isNonSerialDevice(device)) {
+                Log.d(TAG, "⏭ Skipping non-serial USB device " +
+                    "VID=0x${device.vendorId.toString(16).uppercase()} " +
+                    "class=0x${device.deviceClass.toString(16)} (HID/wireless/hub/etc.)")
+                continue
+            }
+            if (driverList.none { it.device == device }) {
+                val fallbackDriver = probeFallbackDriver(device)
+                if (fallbackDriver != null) {
+                    driverList.add(fallbackDriver)
+                }
+            }
+        }
+
+        if (driverList.isEmpty()) {
+            Log.d(TAG, "No USB serial devices detected on system")
             return
         }
 
-        for (driver in availableDrivers) {
+        for (driver in driverList) {
             val device = driver.device
+
+            // Guard: skip if already connected to this exact device
+            if (serialPort?.device == device && serialPort != null) {
+                Log.d(TAG, "↩ Already connected to ${device.deviceName}, skipping reconnect")
+                continue
+            }
+
             Log.d(TAG, "Found USB device: ${device.deviceName} " +
                     "VID=0x${device.vendorId.toString(16).uppercase()} " +
                     "PID=0x${device.productId.toString(16).uppercase()}")
@@ -248,10 +378,6 @@ class UsbSerialManager(private val context: Context) {
 
                 if (!granted) {
                     // ── Strategy #3 (fallback): requestPermission() shows a dialog.
-                    // This path should only be hit if the device is NOT installed as priv-app.
-                    // When the USB_DEVICE_ATTACHED intent-filter is active (AndroidManifest.xml),
-                    // Android may have already granted permission silently before we even reach
-                    // this point, so hasPermission() may be true and this block is skipped.
                     Log.w(TAG, "⚠️ Both silent grant strategies failed — showing permission dialog")
                     val permissionIntent = PendingIntent.getBroadcast(
                         context, 0,
@@ -259,16 +385,109 @@ class UsbSerialManager(private val context: Context) {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0
                     )
                     usbManager.requestPermission(device, permissionIntent)
-                    // Wait for usbReceiver ACTION_USB_PERMISSION callback to call connectToDevice()
                     continue
                 }
             } else {
                 Log.d(TAG, "✅ USB permission already held (persisted from previous session)")
             }
 
-            connectToDevice(device)
+            val connected = connectToDriver(driver)
+            if (connected) {
+                // Successfully connected to the BMI serial device — stop here.
+                // (Single-scale use case; remove this break for multi-scale setups.)
+                Log.d(TAG, "✅ Successfully connected to serial device, stopping probe loop")
+                break
+            }
         }
         updateDeviceList()
+    }
+
+    /**
+     * Returns true if the USB device is definitely NOT a serial/BMI device.
+     *
+     * Checks device-level class first (fast path). If class is 0 (defined at
+     * interface level), scans all interfaces and rejects if ALL interfaces are
+     * non-serial (e.g. all HID).  If at least one interface looks like CDC or
+     * vendor-specific serial, we allow probing.
+     */
+    private fun isNonSerialDevice(device: UsbDevice): Boolean {
+        val devClass = device.deviceClass
+        // Fast-path: device-level class is a known non-serial class
+        if (devClass in NON_SERIAL_DEVICE_CLASSES) return true
+        // If class is 0, check interfaces
+        if (devClass == 0 && device.interfaceCount > 0) {
+            var hasSerialLikeInterface = false
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                val cls = iface.interfaceClass
+                // CDC (2), CDC Data (10), and vendor-specific (255) are serial candidates
+                if (cls == 2 || cls == 10 || cls == 255) {
+                    hasSerialLikeInterface = true
+                    break
+                }
+            }
+            // If no interface looks serial, skip this device
+            if (!hasSerialLikeInterface) return true
+        }
+        return false
+    }
+
+    /**
+     * Fallback driver probe for unlisted custom/clone USB-Serial devices.
+     *
+     * IMPORTANT: This must only be called AFTER [isNonSerialDevice] has returned false.
+     * The fallback is conservative: it only returns a driver when there is clear
+     * evidence of a serial-like interface (CDC or vendor-specific).  The previous
+     * behaviour of returning CdcAcmSerialDriver for ANY unknown device caused the
+     * 2.4 GHz wireless dongle crash loop.
+     */
+    private fun probeFallbackDriver(device: UsbDevice): UsbSerialDriver? {
+        return try {
+            var hasCdcInterface = false
+            var hasVendorSpecificInterface = false
+
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                val cls = iface.interfaceClass
+                if (cls in NON_SERIAL_INTERFACE_CLASSES) {
+                    // At least one non-serial interface — log and continue (might be composite)
+                    Log.d(TAG, "Interface $i on VID=0x${device.vendorId.toString(16)} " +
+                        "has non-serial class=$cls — skipping that interface")
+                    continue
+                }
+                when (cls) {
+                    2, 10 -> { // CDC Control, CDC Data
+                        hasCdcInterface = true
+                        Log.d(TAG, "Found CDC interface (class=$cls) on VID=0x${device.vendorId.toString(16)}")
+                    }
+                    255 -> { // Vendor-specific — possible CH340 variant or proprietary serial
+                        hasVendorSpecificInterface = true
+                        Log.d(TAG, "Found vendor-specific interface on VID=0x${device.vendorId.toString(16)}")
+                    }
+                }
+            }
+
+            when {
+                hasCdcInterface -> {
+                    Log.d(TAG, "✅ Fallback: CDC-ACM driver for VID=0x${device.vendorId.toString(16)}")
+                    CdcAcmSerialDriver(device)
+                }
+                hasVendorSpecificInterface -> {
+                    // Vendor-specific but not HID — try CDC as best-effort
+                    Log.d(TAG, "⚠️ Fallback: best-effort CDC-ACM for vendor-specific VID=0x${device.vendorId.toString(16)}")
+                    CdcAcmSerialDriver(device)
+                }
+                else -> {
+                    // No serial-like interfaces found — do NOT attempt connection
+                    Log.w(TAG, "🚫 Fallback: no serial interface found on VID=0x${device.vendorId.toString(16)} " +
+                        "PID=0x${device.productId.toString(16)} — skipping (likely non-serial device)")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Fallback probe error for VID=0x${device.vendorId.toString(16)}: ${e.message}")
+            null
+        }
     }
 
     /**
@@ -317,21 +536,60 @@ class UsbSerialManager(private val context: Context) {
     }
 
     private fun connectToDevice(device: UsbDevice) {
-        try {
-            val driver = UsbSerialProber.getDefaultProber().probeDevice(device) ?: return
-            val connection = usbManager.openDevice(driver.device) ?: return
+        // Guard: skip non-serial devices even when called from the permission receiver
+        if (isNonSerialDevice(device)) {
+            Log.w(TAG, "🚫 connectToDevice: ignoring non-serial device " +
+                "VID=0x${device.vendorId.toString(16).uppercase()}")
+            return
+        }
+        val driver = customProber.probeDevice(device) ?: probeFallbackDriver(device) ?: return
+        connectToDriver(driver)
+    }
+
+    /**
+     * Opens a USB serial connection and starts the IO manager.
+     *
+     * @return true if the port was successfully opened, false on any failure.
+     *
+     * NOTE: Catches ALL exceptions (not just IOException) because usb-serial-for-android
+     * can throw RuntimeException / UsbSerialException on non-serial devices (e.g. HID).
+     * Narrowing the catch to IOException was the direct cause of the crash loop when
+     * a 2.4 GHz wireless dongle was plugged in and granted permission.
+     */
+    private fun connectToDriver(driver: UsbSerialDriver): Boolean {
+        return try {
+            val connection = usbManager.openDevice(driver.device) ?: run {
+                Log.w(TAG, "openDevice returned null for ${driver.device.deviceName}")
+                return false
+            }
             usbConnection = connection
-            if (driver.ports.isEmpty()) return
+            if (driver.ports.isEmpty()) {
+                Log.w(TAG, "No ports available on ${driver.device.deviceName}")
+                connection.close()
+                usbConnection = null
+                return false
+            }
             serialPort = driver.ports[0]
             serialPort?.let { port ->
                 port.open(connection)
                 port.setParameters(BAUD_RATE, DATA_BITS, STOP_BITS, PARITY)
                 startIoManager()
             }
-        } catch (e: IOException) {
-            Log.e(TAG, "Connection error", e)
+            Log.d(TAG, "✅ Port opened: ${driver.device.deviceName}")
+            true
+        } catch (e: Exception) {
+            // Broad catch is intentional — UsbSerialException, RuntimeException, etc.
+            // all indicate the device is not a valid serial target.
+            Log.e(TAG, "connectToDriver failed for VID=0x${driver.device.vendorId.toString(16).uppercase()}: ${e.message}")
+            // Clean up partial state so a retry won't be blocked
+            runCatching { serialPort?.close() }
+            serialPort = null
+            runCatching { usbConnection?.close() }
+            usbConnection = null
+            false
         }
     }
+
 
     private fun startIoManager() {
         serialPort?.let { port ->
@@ -536,6 +794,8 @@ class UsbSerialManager(private val context: Context) {
             resetAlgorithmState()
             preViewsVal = ""
             onSensorDataReceived?.invoke(0f, 0f)
+            // Notify callers that the scale is gone so they can exit "measuring" UI state
+            onSensorStable?.invoke(0f, 0f)
         } catch (e: Exception) {
             Log.e(TAG, "Disconnect error", e)
         }
