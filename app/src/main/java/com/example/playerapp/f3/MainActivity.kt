@@ -62,6 +62,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -683,6 +684,7 @@ fun F3PlayerScreen(
     
     // Dev panel toggle for drawer
     var showDrawerInDev by remember { mutableStateOf(false) }
+    var showDevFooter by remember { mutableStateOf(InfoStorage.getShowDevFooter(context)) }
     
     // FlowDrawer assets state - load cached assets immediately so the drawer can render on time
     var flowDrawerAssets by remember(screenId, flowDrawerSlotCount) {
@@ -911,6 +913,7 @@ fun F3PlayerScreen(
     // SocketManager for real-time payment and fortune updates
     val socketManager = remember { com.example.playerapp.data.SocketManager(context) }
     val usbSerialManager = remember { com.example.playerapp.data.UsbSerialManager(context) }
+    val usbStatus by usbSerialManager.usbStatusFlow.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     fun resetPaymentFlow(reason: String, invalidateSession: Boolean = true) {
@@ -2030,8 +2033,15 @@ fun F3PlayerScreen(
         // Add sensor stable callback - triggers instantly when UsbSerialManager locks in a value (10 matching readings)
         usbSerialManager.setOnSensorStable { weight, height ->
             if (isDetectingBMI && !isFlowActive && weight >= 3.0f) {
-                println("DEBUG: F3 - 🎯 Sensor stable lock acquired (weight=${weight}kg), capturing BMI instantly...")
-                processFirstValidReading(weight, height)
+                if (height == 0f && heightCalibrationEnabled) {
+                    println("DEBUG: F3 - Height not detected, prompting user to try again.")
+                    isDetectingBMI = false
+                    paymentFlowState = PaymentFlowState.IDLE
+                    bottomToastMessage = "Height not detected, try again"
+                } else {
+                    println("DEBUG: F3 - Sensor stable lock acquired (weight=${weight}kg), capturing BMI instantly...")
+                    processFirstValidReading(weight, height)
+                }
             }
         }
 
@@ -2328,7 +2338,12 @@ fun F3PlayerScreen(
                 isUsbConnected = UsbSerialManager(context).isConnected(), // Will create a quick instance or just check
                 appMode = appMode,
                 paymentFlowState = paymentFlowState.name,
-                socketConnected = socketManager.isConnected()
+                socketConnected = socketManager.isConnected(),
+                showDevFooter = showDevFooter,
+                onToggleDevFooter = { 
+                    showDevFooter = it
+                    InfoStorage.setShowDevFooter(context, it)
+                }
             )
         }
 
@@ -3043,6 +3058,40 @@ fun F3PlayerScreen(
                 bmiShownTimestamp = System.currentTimeMillis()
             }
         )
+        
+        // ========== DEV FOOTER ==========
+        if (showDevFooter) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(200f),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    color = Color(0xCC000000), // Semi-transparent black
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(text = "🛠️ USB DEV MONITOR", color = Color.Yellow, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(text = "Connected Arduinos: ${usbStatus.connectedArduinosCount}", color = Color.White, fontSize = 12.sp)
+                            Text(text = "Ports: ${usbStatus.availablePorts.size}", color = Color.White, fontSize = 12.sp)
+                        }
+                        usbStatus.availablePorts.forEach { port ->
+                            Text(
+                                text = "• ${port.name} (VID:${port.vendorId} PID:${port.productId}) - Perm: ${port.hasPermission} - Conn: ${port.isConnected}",
+                                color = if (port.hasPermission) Color.Green else Color.Red,
+                                fontSize = 10.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(text = "Raw Data: ${usbStatus.receivedDataBytes}", color = Color.Cyan, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
         
         if (!showQRModal && !showBMIDataModal && !showFortuneModal) {
             println("DEBUG: F3 - [MODAL] ⚠️ No modals showing")

@@ -4,7 +4,8 @@
     <!-- This allows the app to detect and connect to USB serial devices -->
     
     <!-- Arduino devices (Used in this specific BMI machine) -->
-    <usb-device vendor-id="9025" product-id="67" /> <!-- Arduino Uno Rev3 -->
+    <usb-device vendor-id="9025" /> <!-- Arduino (0x2341) -->
+    <usb-device vendor-id="10755" /> <!-- Arduino (0x2A03) -->
     
     <!-- FTDI devices -->
     <usb-device vendor-id="1027" product-id="24577" /> <!-- 0x0403 / 0x6001 -->

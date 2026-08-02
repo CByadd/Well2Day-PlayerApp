@@ -69,22 +69,22 @@ fun RedesignedFortuneScreen(
     }
 
     // Adaptive sizes
-    val titleFontSize = if (isCompact) 32.sp else 42.sp
-    val subtitleFontSize = if (isCompact) 14.sp else 18.sp
+    val titleFontSize = if (isCompact) 28.sp else 42.sp
+    val subtitleFontSize = if (isCompact) 12.sp else 18.sp
     val cardPadding = if (isCompact) 16.dp else 24.dp
-    val insightTitleFontSize = if (isCompact) 22.sp else 28.sp
-    val fortuneMsgFontSize = if (isCompact) 18.sp else 24.sp
+    val insightTitleFontSize = if (isCompact) 18.sp else 28.sp
+    val fortuneMsgFontSize = if (isCompact) 16.sp else 24.sp
     val cookieBoxSize = if (isCompact) 100.dp else 140.dp
     val cookieIconSize = if (isCompact) 70.dp else 100.dp
     val dividerHeight = if (isCompact) 120.dp else 160.dp
     val gapSize = if (isCompact) 16.dp else 32.dp
-    val healthTipFontSize = if (isCompact) 13.sp else 15.sp
+    val healthTipFontSize = if (isCompact) 12.sp else 15.sp
     val starBoxSize = if (isCompact) 32.dp else 40.dp
     val starIconSize = if (isCompact) 18.dp else 24.dp
     val cloudBoxSize = if (isCompact) 60.dp else 80.dp
     val cloudIconSize = if (isCompact) 30.dp else 40.dp
-    val cloudTitleSize = if (isCompact) 16.sp else 20.sp
-    val cloudSubSize = if (isCompact) 13.sp else 15.sp
+    val cloudTitleSize = if (isCompact) 14.sp else 20.sp
+    val cloudSubSize = if (isCompact) 11.sp else 15.sp
     val qrBoxSize = if (isCompact) 90.dp else 120.dp
 
     // Colors from the design
@@ -123,19 +123,6 @@ fun RedesignedFortuneScreen(
                         )
                     }
                 }
-            }
-
-            // Screen Logo if available
-            val screenId = bmiData?.get("screenId") as? String
-            if (!screenId.isNullOrBlank()) {
-                ScreenLogo(
-                    screenId = screenId,
-                    modifier = Modifier.align(Alignment.Start),
-                    maxHeight = if (isCompact) 45.dp else 60.dp,
-                    maxWidth = if (isCompact) 140.dp else 180.dp,
-                    forceShow = true
-                )
-                Spacer(modifier = Modifier.height(16.dp))
             }
 
             // Top Header
@@ -359,7 +346,7 @@ fun RedesignedFortuneScreen(
                                 fontSize = cloudSubSize,
                                 fontFamily = ManropeFontFamily,
                                 color = grayTextColor,
-                                lineHeight = if (isCompact) 18.sp else 22.sp
+                                lineHeight = if (isCompact) 16.sp else 22.sp
                             )
                         }
 

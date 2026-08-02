@@ -16,7 +16,24 @@ import com.hoho.android.usbserial.util.SerialInputOutputManager
 import com.example.playerapp.utils.HeightCalibrationStorage
 import java.io.IOException
 import java.util.concurrent.Executors
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
+data class UsbDeviceInfo(
+    val name: String,
+    val vendorId: Int,
+    val productId: Int,
+    val hasPermission: Boolean,
+    val isConnected: Boolean
+)
+
+data class UsbStatus(
+    val availablePorts: List<UsbDeviceInfo> = emptyList(),
+    val connectedArduinosCount: Int = 0,
+    val receivedDataBytes: String = ""
+)
 /**
  * USB Serial Manager for BMI Machine
  *
@@ -83,6 +100,25 @@ class UsbSerialManager(private val context: Context) {
     /** Accumulates bytes until a full newline-terminated line is received. */
     private val dataBuffer = StringBuilder()
 
+    private val _usbStatusFlow = MutableStateFlow(UsbStatus())
+    val usbStatusFlow: StateFlow<UsbStatus> = _usbStatusFlow.asStateFlow()
+
+    private fun updateDeviceList() {
+        val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
+        val devices = availableDrivers.map { driver ->
+            val dev = driver.device
+            UsbDeviceInfo(
+                name = dev.deviceName ?: "Unknown",
+                vendorId = dev.vendorId,
+                productId = dev.productId,
+                hasPermission = usbManager.hasPermission(dev),
+                isConnected = (dev == serialPort?.device)
+            )
+        }
+        val arduinoCount = devices.count { it.isConnected }
+        _usbStatusFlow.update { it.copy(availablePorts = devices, connectedArduinosCount = arduinoCount) }
+    }
+
     // ── Reference-algorithm state ─────────────────────────────────────────────
 
     /** Last weight string seen ("-1" sentinel when weight was 0). */
@@ -139,8 +175,14 @@ class UsbSerialManager(private val context: Context) {
                         }
                     }
                 }
-                UsbManager.ACTION_USB_DEVICE_ATTACHED -> findAndConnectDevice()
-                UsbManager.ACTION_USB_DEVICE_DETACHED -> disconnect()
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    updateDeviceList()
+                    findAndConnectDevice()
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    updateDeviceList()
+                    disconnect()
+                }
             }
         }
     }
@@ -183,36 +225,94 @@ class UsbSerialManager(private val context: Context) {
 
     fun findAndConnectDevice() {
         val availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
-        if (availableDrivers.isEmpty()) return
-        
+        if (availableDrivers.isEmpty()) {
+            Log.d(TAG, "No USB serial drivers found")
+            return
+        }
+
         for (driver in availableDrivers) {
             val device = driver.device
-            
-            // Auto-grant permission using system privileges (since we have MANAGE_USB)
-            try {
-                val grantMethod = usbManager.javaClass.getMethod("grantPermission", UsbDevice::class.java)
-                grantMethod.invoke(usbManager, device)
-                Log.d(TAG, "Auto-granted USB permission via reflection")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to auto-grant USB permission: \${e.message}")
-                try {
-                    val grantMethod2 = usbManager.javaClass.getMethod("grantPermission", UsbDevice::class.java, String::class.java)
-                    grantMethod2.invoke(usbManager, device, context.packageName)
-                } catch (e2: Exception) {
-                    Log.e(TAG, "Failed auto-grant fallback: \${e2.message}")
+            Log.d(TAG, "Found USB device: ${device.deviceName} " +
+                    "VID=0x${device.vendorId.toString(16).uppercase()} " +
+                    "PID=0x${device.productId.toString(16).uppercase()}")
+
+            if (!usbManager.hasPermission(device)) {
+                // ── Strategy #1 (priv-app, Android 12+): grantPermission(device, packageName)
+                // Requires MANAGE_USB + priv-app + privapp-permissions XML
+                var granted = tryGrantPermission(device)
+
+                if (!granted) {
+                    // ── Strategy #2 (priv-app, older Android): grantPermission(device)
+                    granted = tryGrantPermissionLegacy(device)
                 }
+
+                if (!granted) {
+                    // ── Strategy #3 (fallback): requestPermission() shows a dialog.
+                    // This path should only be hit if the device is NOT installed as priv-app.
+                    // When the USB_DEVICE_ATTACHED intent-filter is active (AndroidManifest.xml),
+                    // Android may have already granted permission silently before we even reach
+                    // this point, so hasPermission() may be true and this block is skipped.
+                    Log.w(TAG, "⚠️ Both silent grant strategies failed — showing permission dialog")
+                    val permissionIntent = PendingIntent.getBroadcast(
+                        context, 0,
+                        Intent(ACTION_USB_PERMISSION),
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0
+                    )
+                    usbManager.requestPermission(device, permissionIntent)
+                    // Wait for usbReceiver ACTION_USB_PERMISSION callback to call connectToDevice()
+                    continue
+                }
+            } else {
+                Log.d(TAG, "✅ USB permission already held (persisted from previous session)")
             }
 
-            if (usbManager.hasPermission(device)) {
-                connectToDevice(device)
-            } else {
-                val permissionIntent = PendingIntent.getBroadcast(
-                    context, 0,
-                    Intent(ACTION_USB_PERMISSION),
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0
-                )
-                usbManager.requestPermission(device, permissionIntent)
-            }
+            connectToDevice(device)
+        }
+        updateDeviceList()
+    }
+
+    /**
+     * Strategy #1 — priv-app silent grant (Android 12+).
+     * Calls UsbManager.grantPermission(UsbDevice, String) via reflection.
+     * Requires: installed in /system/priv-app + MANAGE_USB in privapp-permissions XML.
+     *
+     * @return true if the call succeeded and permission is now held.
+     */
+    private fun tryGrantPermission(device: UsbDevice): Boolean {
+        return try {
+            val method = usbManager.javaClass.getMethod(
+                "grantPermission", UsbDevice::class.java, String::class.java
+            )
+            method.invoke(usbManager, device, context.packageName)
+            val held = usbManager.hasPermission(device)
+            if (held) Log.d(TAG, "✅ Strategy #1 succeeded: grantPermission(device, packageName)")
+            else Log.w(TAG, "Strategy #1 invoked but permission not held yet")
+            held
+        } catch (e: Exception) {
+            Log.d(TAG, "Strategy #1 unavailable: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Strategy #2 — priv-app silent grant (pre-Android 12 / older OEM builds).
+     * Calls UsbManager.grantPermission(UsbDevice) via reflection.
+     *
+     * @return true if the call succeeded and permission is now held.
+     */
+    private fun tryGrantPermissionLegacy(device: UsbDevice): Boolean {
+        return try {
+            val method = usbManager.javaClass.getMethod(
+                "grantPermission", UsbDevice::class.java
+            )
+            method.invoke(usbManager, device)
+            val held = usbManager.hasPermission(device)
+            if (held) Log.d(TAG, "✅ Strategy #2 succeeded: grantPermission(device)")
+            else Log.w(TAG, "Strategy #2 invoked but permission not held yet")
+            held
+        } catch (e: Exception) {
+            Log.d(TAG, "Strategy #2 unavailable: ${e.message}")
+            false
         }
     }
 
@@ -255,30 +355,31 @@ class UsbSerialManager(private val context: Context) {
      */
     private fun processReceivedData(data: ByteArray) {
         try {
-            val decoded = hexToString(data.joinToString("") { "%02X".format(it) })
+            val decoded = String(data, Charsets.UTF_8)
             dataBuffer.append(decoded)
 
-            while (dataBuffer.contains('\n') || dataBuffer.contains("\\n")) {
-                val newlineIdx = dataBuffer.indexOf('\n').takeIf { it >= 0 }
-                    ?: dataBuffer.indexOf("\\n").takeIf { it >= 0 }
-                    ?: break
+            while (true) {
+                var newlineIdx = dataBuffer.indexOf('\n')
+                var skip = 1
+                
+                if (newlineIdx < 0) {
+                    newlineIdx = dataBuffer.indexOf("\\n")
+                    if (newlineIdx >= 0) skip = 2
+                }
+                
+                if (newlineIdx < 0) break
+
                 val line = dataBuffer.substring(0, newlineIdx)
-                dataBuffer.delete(0, newlineIdx + 1)
-                if (line.isNotBlank()) processLine(line.trim())
+                dataBuffer.delete(0, newlineIdx + skip)
+                
+                if (line.isNotBlank()) {
+                    _usbStatusFlow.update { it.copy(receivedDataBytes = line.trim()) }
+                    processLine(line.trim())
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Data processing error", e)
         }
-    }
-
-    private fun hexToString(hex: String): String {
-        val sb = StringBuilder(hex.length / 2)
-        var i = 0
-        while (i + 1 < hex.length) {
-            sb.append(hex.substring(i, i + 2).toInt(16).toChar())
-            i += 2
-        }
-        return sb.toString()
     }
 
     // ── Reference algorithm core ──────────────────────────────────────────────

@@ -17,6 +17,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.activity.compose.BackHandler
 
 /**
  * QR Code Modal - Shows QR code for payment
@@ -32,14 +36,14 @@ fun QRModal(
 ) {
     if (!isVisible || bmiData == null) return
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = allowDismissOnOverlay,
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
+    if (allowDismissOnOverlay) {
+        BackHandler { onDismiss() }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(100f)
     ) {
         val configuration = LocalConfiguration.current
         val screenWidthDp = configuration.screenWidthDp.dp
@@ -48,6 +52,20 @@ fun QRModal(
         } else {
             480.dp
         }
+
+        // Overlay that only covers the available space, leaving drawer unobscured
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(if (drawerOffset > 0) screenWidthDp - drawerOffset.dp else screenWidthDp)
+                .align(Alignment.CenterStart)
+                .background(Color.Black.copy(alpha = 0.65f))
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = {
+                        if (allowDismissOnOverlay) onDismiss()
+                    })
+                }
+        )
 
         Box(
             modifier = Modifier
@@ -67,8 +85,8 @@ fun QRModal(
                         ScreenLogo(
                             screenId = screenId,
                             modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .offset(x = 24.dp, y = (-70).dp),
+                                .align(Alignment.TopCenter)
+                                .offset(y = (-70).dp),
                             maxHeight = 70.dp,
                             maxWidth = 200.dp,
                             forceShow = true

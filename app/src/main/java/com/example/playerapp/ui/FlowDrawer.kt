@@ -81,8 +81,7 @@ fun FlowDrawer(
                     .fillMaxHeight()
                     .width(drawerWidth.dp)
                     .background(
-                        color = DrawerBg,
-                        shape = RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)
+                        color = DrawerBg
                     )
                     .zIndex(9999f)
             ) {

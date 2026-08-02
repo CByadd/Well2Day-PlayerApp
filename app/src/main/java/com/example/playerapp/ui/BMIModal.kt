@@ -526,7 +526,7 @@ fun QRCodeScreen(
                 Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "QR Code",
-                    modifier = Modifier.size(if (isCompact) 140.dp else 180.dp)
+                    modifier = Modifier.size(if (isCompact) 110.dp else 100.dp)
                 )
             }
         } ?: run {

@@ -32,16 +32,24 @@ fun FortuneModal(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.65f))
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = {
-                    if (allowDismissOnOverlay) onDismiss()
-                })
-            }
             .zIndex(100f)
     ) {
         val configuration = LocalConfiguration.current
         val screenWidthDp = configuration.screenWidthDp.dp
+        
+        // Dark overlay only on the left side (availableWidth)
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(if (drawerOffset > 0) screenWidthDp - drawerOffset.dp else screenWidthDp)
+                .align(Alignment.CenterStart)
+                .background(Color.Black.copy(alpha = 0.65f))
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = {
+                        if (allowDismissOnOverlay) onDismiss()
+                    })
+                }
+        )
         val availableWidth = if (drawerOffset > 0) {
             screenWidthDp - drawerOffset.dp
         } else {
@@ -60,13 +68,26 @@ fun FortuneModal(
                     .align(if (drawerOffset > 0) Alignment.CenterStart else Alignment.Center),
                 contentAlignment = Alignment.Center
             ) {
-                RedesignedFortuneScreen(
-                    bmiData = bmiData,
-                    flowType = flowType,
-                    onDismiss = onDismiss,
-                    allowDismissOnOverlay = allowDismissOnOverlay,
-                    availableWidth = availableWidth
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    val screenId = bmiData["screenId"] as? String
+                    ScreenLogo(
+                        screenId = screenId,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset(y = (-70).dp),
+                        maxHeight = 70.dp,
+                        maxWidth = 200.dp,
+                        forceShow = true
+                    )
+
+                    RedesignedFortuneScreen(
+                        bmiData = bmiData,
+                        flowType = flowType,
+                        onDismiss = onDismiss,
+                        allowDismissOnOverlay = allowDismissOnOverlay,
+                        availableWidth = if (drawerOffset > 0) (availableWidth - 64.dp).coerceAtMost(480.dp) else availableWidth.coerceAtMost(480.dp)
+                    )
+                }
             }
         }
     }

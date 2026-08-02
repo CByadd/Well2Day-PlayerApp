@@ -37,7 +37,24 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            
+
+            <!--
+                USB Host persistence strategy #1: USB_DEVICE_ATTACHED intent-filter.
+                When the BMI sensor is plugged in, Android checks this filter against
+                device_filter.xml. On first attach the user sees a one-time
+                "Open with PlayerApp? [Always]" dialog. Choosing "Always" stores the
+                permission permanently — it survives app restarts AND device reboots.
+                Combined with the priv-app grantPermission() call in UsbSerialManager
+                (strategy #2) and MANAGE_USB in privapp-permissions-playerapp.xml
+                (strategy #3), permission will never be lost.
+            -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/device_filter" />
+
             <!-- Uncomment this if you want to replace TV launcher -->
             <!--
             <intent-filter>

@@ -27,7 +27,9 @@ import java.io.IOException
             /** App operating mode pushed by admin: "F1", "F2", or "PlayerOnly" */
             val appMode: String? = null,
             /** Hardware/display rotation of the app: "landscape", "portrait", "reverse_landscape", "reverse_portrait" */
-            val rotation: String? = "portrait"
+            val rotation: String? = "portrait",
+            /** Whether to show the USB Dev Footer */
+            val showDevFooter: Boolean? = false
         )
     
     /**
@@ -53,6 +55,7 @@ import java.io.IOException
                 if (info.hideAppMargin != null) put("hideAppMargin", info.hideAppMargin)
                 if (info.appMode != null) put("appMode", info.appMode)
                 if (info.rotation != null) put("rotation", info.rotation)
+                if (info.showDevFooter != null) put("showDevFooter", info.showDevFooter)
             }
             
             file.writeText(json.toString(2)) // Pretty print with 2-space indent
@@ -114,7 +117,10 @@ import java.io.IOException
                     json.optBoolean("hideAppMargin", false)
                 } else null,
                 appMode = json.optString("appMode", null).takeIf { !it.isNullOrBlank() },
-                rotation = json.optString("rotation", "portrait").takeIf { !it.isNullOrBlank() }
+                rotation = json.optString("rotation", "portrait").takeIf { !it.isNullOrBlank() },
+                showDevFooter = if (json.has("showDevFooter") && !json.isNull("showDevFooter")) {
+                    json.optBoolean("showDevFooter", false)
+                } else null
             )
             
             println("DEBUG: InfoStorage - Loaded info.json: screenId=${info.screenId}, screenName=${info.screenName}, location=${info.location}, heightCalibration=${info.heightCalibration}, heightCalibrationEnabled=${info.heightCalibrationEnabled}, playlistId=${info.playlistId}, paymentAmount=${info.paymentAmount}")
@@ -133,7 +139,7 @@ import java.io.IOException
     fun updateInfo(context: Context, info: ScreenInfo) {
         try {
             // Load existing info first
-            val existingInfo = loadInfo(context) ?: ScreenInfo(null, null, null, null, null, null, null, null, null, null, null, null)
+            val existingInfo = loadInfo(context) ?: ScreenInfo(null, null, null, null, null, null, null, null, null, null, null, null, "portrait", false)
             
             // Merge with new values (new values take precedence)
             val mergedInfo = ScreenInfo(
@@ -149,7 +155,8 @@ import java.io.IOException
                 hideScreenId = info.hideScreenId ?: existingInfo.hideScreenId,
                 hideAppMargin = info.hideAppMargin ?: existingInfo.hideAppMargin,
                 appMode = info.appMode ?: existingInfo.appMode,
-                rotation = info.rotation ?: existingInfo.rotation
+                rotation = info.rotation ?: existingInfo.rotation,
+                showDevFooter = info.showDevFooter ?: existingInfo.showDevFooter
             )
             
             // Save merged info
@@ -189,6 +196,42 @@ import java.io.IOException
      */
     fun getScreenName(context: Context): String? {
         return loadInfo(context)?.screenName
+    }
+    
+    /**
+     * Set screen rotation.
+     */
+    fun setRotation(context: Context, rotation: String) {
+        val currentInfo = loadInfo(context) ?: ScreenInfo(
+            screenId = null, screenName = null, location = null, 
+            heightCalibration = null, heightCalibrationEnabled = null, 
+            playlistId = null, paymentAmount = null, flowDrawerEnabled = null,
+            flowDrawerSlotCount = null, hideScreenId = null, hideAppMargin = null,
+            appMode = null, rotation = rotation, showDevFooter = null
+        )
+        saveInfo(context, currentInfo.copy(rotation = rotation))
+    }
+
+    /**
+     * Get showDevFooter boolean. Defaults to false.
+     */
+    fun getShowDevFooter(context: Context): Boolean {
+        val info = loadInfo(context)
+        return info?.showDevFooter ?: false
+    }
+
+    /**
+     * Set showDevFooter boolean.
+     */
+    fun setShowDevFooter(context: Context, show: Boolean) {
+        val currentInfo = loadInfo(context) ?: ScreenInfo(
+            screenId = null, screenName = null, location = null, 
+            heightCalibration = null, heightCalibrationEnabled = null, 
+            playlistId = null, paymentAmount = null, flowDrawerEnabled = null,
+            flowDrawerSlotCount = null, hideScreenId = null, hideAppMargin = null,
+            appMode = null, rotation = null, showDevFooter = show
+        )
+        saveInfo(context, currentInfo.copy(showDevFooter = show))
     }
     
     /**

@@ -25,7 +25,9 @@ fun TroubleshootModal(
     isUsbConnected: Boolean,
     appMode: String,
     paymentFlowState: String,
-    socketConnected: Boolean
+    socketConnected: Boolean,
+    showDevFooter: Boolean,
+    onToggleDevFooter: (Boolean) -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -138,6 +140,30 @@ fun TroubleshootModal(
                 ) {
                     Text(text = "Flow State:", fontSize = 14.sp, color = Color(0xFF475569))
                     Text(text = paymentFlowState, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = Color(0xFFE2E8F0))
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                // Dev Footer Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "Show Dev Footer", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
+                        Text(text = "Displays real-time USB stats", fontSize = 12.sp, color = Color(0xFF64748B))
+                    }
+                    Switch(
+                        checked = showDevFooter,
+                        onCheckedChange = onToggleDevFooter,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color(0xFF0F766E)
+                        )
+                    )
                 }
             }
         }

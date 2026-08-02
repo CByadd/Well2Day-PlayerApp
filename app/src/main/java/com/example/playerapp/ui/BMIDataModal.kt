@@ -44,16 +44,24 @@ fun BMIDataModal(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.65f))
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = {
-                    if (allowDismissOnOverlay) onDismiss()
-                })
-            }
             .zIndex(100f)
     ) {
         val configuration = LocalConfiguration.current
         val screenWidthDp = configuration.screenWidthDp.dp
+        
+        // Dark overlay only on the left side (availableWidth)
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(if (drawerOffset > 0) screenWidthDp - drawerOffset.dp else screenWidthDp)
+                .align(Alignment.CenterStart)
+                .background(Color.Black.copy(alpha = 0.65f))
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = {
+                        if (allowDismissOnOverlay) onDismiss()
+                    })
+                }
+        )
         val availableWidth = if (drawerOffset > 0) {
             screenWidthDp - drawerOffset.dp
         } else {
@@ -104,8 +112,8 @@ fun BMIDataModal(
                             ScreenLogo(
                                 screenId = screenId,
                                 modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .offset(x = 24.dp, y = (-70).dp),
+                                    .align(Alignment.TopCenter)
+                                    .offset(y = (-70).dp),
                                 maxHeight = 70.dp,
                                 maxWidth = 200.dp,
                                 forceShow = true
@@ -172,8 +180,8 @@ fun BMIDataModal(
                             ScreenLogo(
                                 screenId = screenId,
                                 modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .offset(x = 24.dp, y = (-70).dp),
+                                    .align(Alignment.TopCenter)
+                                    .offset(y = (-70).dp),
                                 maxHeight = 70.dp,
                                 maxWidth = 200.dp,
                                 forceShow = true
