@@ -1,3 +1,7 @@
+import java.util.Properties
+import java.io.FileInputStream
+import java.io.FileOutputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,7 +9,21 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-import org.gradle.jvm.toolchain.JavaLanguageVersion
+// 1. Locate the file in the ROOT directory
+val versionPropsFile = rootProject.file("version.properties")
+
+// 2. Load the properties
+val vProps = Properties().apply {
+    if (versionPropsFile.exists()) {
+        versionPropsFile.inputStream().use { load(it) }
+    }
+}
+
+// 3. Extract values (Fallback to 0 to easily detect if file reading fails)
+val majorValue = vProps.getProperty("MAJOR", "1").toInt()
+val minorValue = vProps.getProperty("MINOR", "75").toInt()
+val vCodeValue = vProps.getProperty("VERSION_CODE", "1").toInt()
+val vNameValue = "$majorValue.${String.format("%02d", minorValue)}"
 
 android {
     namespace = "com.example.playerapp"
@@ -23,13 +41,12 @@ android {
     defaultConfig {
         minSdk = 21
         targetSdk = 36
-        versionCode = 1
-        versionName = "F3-1.0"
+        versionCode = vCodeValue
+        versionName = vNameValue
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Product flavors for different flow types
     flavorDimensions += "flow"
     productFlavors {
         create("normal") {
@@ -64,33 +81,17 @@ android {
             )
         }
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
+    
     buildFeatures {
         compose = true
         buildConfig = true
     }
 
-    lint {
-        // org.json is pulled in transitively and conflicts with Android's built-in org.json.
-        // This is a pre-existing transitive dependency issue — not a runtime problem since
-        // Android's platform classes take precedence. Disabling the check so it doesn't
-        // block release builds.
-        disable += "DuplicatePlatformClasses"
-        abortOnError = true
-    }
-
     applicationVariants.all {
-        val variantName = name
-        val version = versionName
         outputs.all {
             val outputImpl = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            outputImpl.outputFileName = "Well2Day_BMI_${variantName}_v${version}.apk"
+            // We use vNameValue directly here to avoid flavor suffixes in the filename
+            outputImpl.outputFileName = "Well2day BMI App v$vNameValue.apk"
         }
     }
 }
@@ -105,28 +106,16 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation("com.google.android.material:material:1.10.0")
-    // Network
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // Socket.IO for real-time updates
     implementation("io.socket:socket.io-client:2.1.0")
-    
-    // Image loading (kiosk-grade caching + preloading)
     implementation("com.github.bumptech.glide:glide:4.16.0")
     implementation("com.github.bumptech.glide:compose:1.0.0-beta01")
-    // Optional: OkHttp integration for Glide (better networking behavior)
     implementation("com.github.bumptech.glide:okhttp3-integration:4.16.0")
-
-    // Coil is still used in a few legacy UI surfaces; will be migrated incrementally.
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-gif:2.6.0")
-    // QR code generation (ZXing core)
     implementation("com.google.zxing:core:3.5.1")
-    // Lottie animations
     implementation("com.airbnb.android:lottie-compose:6.1.0")
-    // Material Icons Extended
     implementation("androidx.compose.material:material-icons-extended:1.5.4")
-    
-    // Media3 (ExoPlayer) for kiosk-grade playback + caching
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-ui:1.2.1")
     implementation("androidx.media3:media3-common:1.2.1")
@@ -135,21 +124,12 @@ dependencies {
     implementation("androidx.media3:media3-database:1.2.1")
     implementation("androidx.activity:activity-compose:1.8.0")
     implementation("androidx.webkit:webkit:1.8.0")
-    // USB Serial for Android
     implementation("com.github.mik3y:usb-serial-for-android:3.7.0")
-
-    // Room Database
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
-
-    // WorkManager for background sync
     implementation(libs.androidx.work.runtime.ktx)
-
-    // Testing
     testImplementation(libs.junit)
-    testImplementation("org.mockito:mockito-core:5.11.0")
-    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -158,6 +138,39 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 }
 
+// This task handles the actual increment logic
+tasks.register("incrementVersion") {
+    doLast {
+        val props = Properties()
+        if (versionPropsFile.exists()) {
+            versionPropsFile.inputStream().use { props.load(it) }
+        }
 
+        var major = props.getProperty("MAJOR", "1").toInt()
+        var minor = props.getProperty("MINOR", "75").toInt()
+        var vCode = props.getProperty("VERSION_CODE", "1").toInt()
 
+        vCode++
+        minor++
+        if (minor > 99) {
+            minor = 0
+            major++
+        }
 
+        props.setProperty("MAJOR", major.toString())
+        props.setProperty("MINOR", minor.toString())
+        props.setProperty("VERSION_CODE", vCode.toString())
+
+        versionPropsFile.outputStream().use {
+            props.store(it, "Auto-incremented version properties")
+        }
+        println(">>> Version successfully incremented to $major.${String.format("%02d", minor)} for the NEXT build.")
+    }
+}
+
+// Hook the increment task to run after ANY assemble or bundle task
+tasks.configureEach {
+    if (name.startsWith("assemble") || name.startsWith("bundle")) {
+        finalizedBy("incrementVersion")
+    }
+}

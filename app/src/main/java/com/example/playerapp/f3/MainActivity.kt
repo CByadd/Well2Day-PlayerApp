@@ -2335,7 +2335,11 @@ fun F3PlayerScreen(
                     showTroubleshootMenu = false
                 },
                 isInternetConnected = !isOffline,
-                isUsbConnected = UsbSerialManager(context).isConnected(), // Will create a quick instance or just check
+                // A sensor already connected when the box booted is physically
+                // detected before Android finishes the USB permission handshake.
+                // Treat that as connected in diagnostics; the manager continues
+                // retrying until its serial port is open.
+                isUsbConnected = usbStatus.detectedDevicesCount > 0,
                 appMode = appMode,
                 paymentFlowState = paymentFlowState.name,
                 socketConnected = socketManager.isConnected(),
@@ -3077,12 +3081,16 @@ fun F3PlayerScreen(
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(text = "Connected Arduinos: ${usbStatus.connectedArduinosCount}", color = Color.White, fontSize = 12.sp)
-                            Text(text = "Ports: ${usbStatus.availablePorts.size}", color = Color.White, fontSize = 12.sp)
+                            Text(text = "USB: ${usbStatus.attachedDevicesCount} / Serial: ${usbStatus.detectedDevicesCount}", color = Color.White, fontSize = 12.sp)
                         }
                         usbStatus.availablePorts.forEach { port ->
                             Text(
-                                text = "• ${port.name} (VID:${port.vendorId} PID:${port.productId}) - Perm: ${port.hasPermission} - Conn: ${port.isConnected}",
-                                color = if (port.hasPermission) Color.Green else Color.Red,
+                                text = "• ${port.name} (VID:${port.vendorId} PID:${port.productId}) - Serial: ${port.isSerialCandidate} - Driver: ${port.hasRecognizedDriver} - Perm: ${port.hasPermission} - Conn: ${port.isConnected}",
+                                color = when {
+                                    port.isConnected -> Color.Green
+                                    port.isSerialCandidate -> Color.Yellow
+                                    else -> Color.LightGray
+                                },
                                 fontSize = 10.sp
                             )
                         }

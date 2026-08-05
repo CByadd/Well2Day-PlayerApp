@@ -21,8 +21,8 @@ import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import com.hoho.android.usbserial.util.SerialInputOutputManager
 import com.example.playerapp.utils.HeightCalibrationStorage
-import java.io.IOException
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,11 +33,18 @@ data class UsbDeviceInfo(
     val vendorId: Int,
     val productId: Int,
     val hasPermission: Boolean,
-    val isConnected: Boolean
+    val isConnected: Boolean,
+    val isSerialCandidate: Boolean,
+    val hasRecognizedDriver: Boolean
 )
 
 data class UsbStatus(
     val availablePorts: List<UsbDeviceInfo> = emptyList(),
+    /** Every physical device currently enumerated by Android's USB host. */
+    val attachedDevicesCount: Int = 0,
+    /** USB serial-capable devices currently visible on the Android USB bus. */
+    val detectedDevicesCount: Int = 0,
+    /** Devices with a serial port that has been opened successfully. */
     val connectedArduinosCount: Int = 0,
     val receivedDataBytes: String = ""
 )
@@ -78,6 +85,10 @@ class UsbSerialManager(private val context: Context) {
         private const val DATA_BITS = 8
         private const val STOP_BITS = UsbSerialPort.STOPBITS_1
         private const val PARITY   = UsbSerialPort.PARITY_NONE
+        private const val USB_ACCESS_PREFS = "usb_access_registry"
+        private const val TRUSTED_DEVICE_PREFIX = "trusted_device:"
+        private const val USB_REFRESH_INTERVAL_SECONDS = 3L
+        private const val USB_RECOVERY_DELAY_SECONDS = 1L
 
         /**
          * Number of consecutive identical-weight frames required before
@@ -94,6 +105,14 @@ class UsbSerialManager(private val context: Context) {
         /** Valid height range in cm — outside this range height is reported as 0. */
         private const val MIN_HEIGHT_CM = 140f
         private const val MAX_HEIGHT_CM = 200f
+
+        private val NUMBER_PATTERN = Regex("[-+]?\\d+(?:[.,]\\d+)?")
+        private val WEIGHT_FIELD_PATTERN = Regex(
+            """(?i)[\"']?(?:weight|wt|mass|w)[\"']?\s*[:=]\s*([-+]?\d+(?:[.,]\d+)?)\s*(kg|kgs|g|gram|grams|lb|lbs)?"""
+        )
+        private val HEIGHT_FIELD_PATTERN = Regex(
+            """(?i)[\"']?(?:height|ht|h)[\"']?\s*[:=]\s*([-+]?\d+(?:[.,]\d+)?)\s*(cm|cms|m|meter|meters|mm|in|inch|inches)?"""
+        )
 
         /**
          * USB device classes that are definitely NOT serial/BMI devices.
@@ -124,16 +143,38 @@ class UsbSerialManager(private val context: Context) {
          * Used in probeFallbackDriver to avoid assigning CDC drivers to HID interfaces.
          */
         private val NON_SERIAL_INTERFACE_CLASSES = setOf(3, 6, 7, 8, 9, 11, 14, 15, 0xE0)
+
+        // Explicit blacklist for non-serial wireless receivers, mice, and dongles
+        private val BLACKLISTED_VENDOR_PRODUCT_IDS = setOf(
+            Pair(12994, 102),   // 0x32C2:0x0066 2.4 GHz Wireless Remote Dongle
+            Pair(0x32C2, 0x0066)
+        )
+
+        // Boards from these manufacturers are allowed through the conservative
+        // class filter even when they enumerate as a composite/bootloader device.
+        // A replacement Arduino often has a different PID from the original board.
+        private val KNOWN_SERIAL_VENDOR_IDS = setOf(
+            0x2341, 0x2A03, 0x1A86, 0x0403, 0x10C4, 0x067B,
+            0x239A, 0x1B4F, 0x16C0, 0x0483, 0x2E8A, 0x303A
+        )
     }
 
     // ── USB / serial infrastructure ──────────────────────────────────────────
 
     private var usbManager: UsbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
-    private var serialPort: UsbSerialPort? = null
+    private val usbAccessPreferences = context.getSharedPreferences(USB_ACCESS_PREFS, Context.MODE_PRIVATE)
+    private val permissionRequestsInFlight = mutableSetOf<String>()
+    private val deniedPermissionKeys = mutableSetOf<String>()
+    private val connectionLock = Any()
+    @Volatile private var isCleanedUp = false
+    @Volatile private var serialPort: UsbSerialPort? = null
     private var usbConnection: UsbDeviceConnection? = null
     private var serialIoManager: SerialInputOutputManager? = null
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "usb-serial-io").apply { isDaemon = true }
+    }
+    private val refreshExecutor = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "usb-device-watchdog").apply { isDaemon = true }
     }
 
     /** Accumulates bytes until a full newline-terminated line is received. */
@@ -153,9 +194,11 @@ class UsbSerialManager(private val context: Context) {
         customTable.addProduct(0x1A86, 0x7524, Ch34xSerialDriver::class.java)
         customTable.addProduct(0x1A86, 0x5584, Ch34xSerialDriver::class.java) // CH9102
 
-        // Arduino CDC ACM (Uno R3/R4, Mega, Leonardo, Micro, Nano Every, Nano BLE/IoT, Due, Zero, MKR)
+        // Arduino CDC ACM (Uno R1/R2/R3/R4, Mega, Leonardo, Micro, Nano Every, Nano BLE/IoT, Due, Zero, MKR)
+        customTable.addProduct(0x2341, 0x0001, CdcAcmSerialDriver::class.java)
         customTable.addProduct(0x2341, 0x0043, CdcAcmSerialDriver::class.java)
         customTable.addProduct(0x2341, 0x0010, CdcAcmSerialDriver::class.java)
+        customTable.addProduct(0x2341, 0x003F, CdcAcmSerialDriver::class.java)
         customTable.addProduct(0x2341, 0x0042, CdcAcmSerialDriver::class.java)
         customTable.addProduct(0x2341, 0x0036, CdcAcmSerialDriver::class.java)
         customTable.addProduct(0x2341, 0x8036, CdcAcmSerialDriver::class.java)
@@ -200,20 +243,39 @@ class UsbSerialManager(private val context: Context) {
         UsbSerialProber(customTable)
     }
 
+    /**
+     * Publishes the hardware state separately from the open-port state.
+     *
+     * A USB device can be physically present while Android is still waiting for
+     * the permission result (common after a box reboot with the sensor already
+     * connected). Previously that state was omitted because this method only
+     * listed devices for which the serial prober had already produced a driver;
+     * consequently the UI showed "Disconnected" even though the USB bus saw the
+     * sensor. Unknown CDC/vendor serial devices are also kept visible so their
+     * VID/PID can be diagnosed without unplugging the box.
+     */
     private fun updateDeviceList() {
-        val availableDrivers = customProber.findAllDrivers(usbManager)
-        val devices = availableDrivers.map { driver ->
-            val dev = driver.device
+        val devices = usbManager.deviceList.values.map { dev ->
+            val serialCandidate = !isNonSerialDevice(dev)
             UsbDeviceInfo(
                 name = dev.deviceName ?: "Unknown",
                 vendorId = dev.vendorId,
                 productId = dev.productId,
                 hasPermission = usbManager.hasPermission(dev),
-                isConnected = (dev == serialPort?.device)
+                isConnected = (dev == serialPort?.device),
+                isSerialCandidate = serialCandidate,
+                hasRecognizedDriver = customProber.probeDevice(dev) != null
             )
         }
-        val arduinoCount = devices.count { it.isConnected }
-        _usbStatusFlow.update { it.copy(availablePorts = devices, connectedArduinosCount = arduinoCount) }
+        val openPortCount = devices.count { it.isConnected }
+        _usbStatusFlow.update {
+            it.copy(
+                availablePorts = devices,
+                attachedDevicesCount = devices.size,
+                detectedDevicesCount = devices.count { it.isSerialCandidate },
+                connectedArduinosCount = openPortCount
+            )
+        }
     }
 
 
@@ -269,17 +331,37 @@ class UsbSerialManager(private val context: Context) {
                             intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
                         }
                         if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                            device?.let { connectToDevice(it) }
+                            device?.let {
+                                permissionRequestsInFlight.remove(deviceKey(it))
+                                deniedPermissionKeys.remove(deviceKey(it))
+                                rememberApprovedDevice(it)
+                                requestUsbRefresh("permission granted")
+                            }
+                        } else {
+                            device?.let {
+                                permissionRequestsInFlight.remove(deviceKey(it))
+                                deniedPermissionKeys.add(deviceKey(it))
+                            }
+                            Log.w(TAG, "USB permission was denied for ${device?.deviceName}")
                         }
                     }
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    updateDeviceList()
-                    findAndConnectDevice()
+                    usbDeviceFromIntent(intent)?.let { deniedPermissionKeys.remove(deviceKey(it)) }
+                    requestUsbRefresh("device attached")
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    updateDeviceList()
-                    disconnect()
+                    val detachedDevice = usbDeviceFromIntent(intent)
+                    detachedDevice?.let {
+                        permissionRequestsInFlight.remove(deviceKey(it))
+                        deniedPermissionKeys.remove(deviceKey(it))
+                    }
+                    refreshExecutor.execute {
+                        if (detachedDevice != null && serialPort?.device == detachedDevice) {
+                            closeSerialConnection(notifyDisconnected = true)
+                        }
+                        refreshUsbConnection("device detached")
+                    }
                 }
             }
         }
@@ -296,6 +378,12 @@ class UsbSerialManager(private val context: Context) {
         } else {
             context.registerReceiver(usbReceiver, filter)
         }
+        refreshExecutor.scheduleWithFixedDelay(
+            { refreshUsbConnection("watchdog") },
+            0,
+            USB_REFRESH_INTERVAL_SECONDS,
+            TimeUnit.SECONDS
+        )
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -321,86 +409,136 @@ class UsbSerialManager(private val context: Context) {
         this.onLogMessage = callback
     }
 
-    fun findAndConnectDevice() {
-        val availableDrivers = customProber.findAllDrivers(usbManager)
-        if (availableDrivers.isEmpty()) {
-            Log.d(TAG, "No USB serial drivers found via probe table; checking raw USB devices...")
+    fun findAndConnectDevice() = requestUsbRefresh("requested")
+
+    private fun requestUsbRefresh(reason: String) {
+        if (!isCleanedUp) {
+            refreshExecutor.execute { refreshUsbConnection(reason) }
         }
-
-        // Get driver list from prober, plus fallback probe for attached USB devices.
-        // Non-serial class devices (HID, wireless, hub, etc.) are filtered BEFORE
-        // fallback probing to avoid the crash loop caused by attempting to open them.
-        val driverList = mutableListOf<UsbSerialDriver>()
-        driverList.addAll(availableDrivers)
-
-        for (device in usbManager.deviceList.values) {
-            if (isNonSerialDevice(device)) {
-                Log.d(TAG, "⏭ Skipping non-serial USB device " +
-                    "VID=0x${device.vendorId.toString(16).uppercase()} " +
-                    "class=0x${device.deviceClass.toString(16)} (HID/wireless/hub/etc.)")
-                continue
-            }
-            if (driverList.none { it.device == device }) {
-                val fallbackDriver = probeFallbackDriver(device)
-                if (fallbackDriver != null) {
-                    driverList.add(fallbackDriver)
-                }
-            }
-        }
-
-        if (driverList.isEmpty()) {
-            Log.d(TAG, "No USB serial devices detected on system")
-            return
-        }
-
-        for (driver in driverList) {
-            val device = driver.device
-
-            // Guard: skip if already connected to this exact device
-            if (serialPort?.device == device && serialPort != null) {
-                Log.d(TAG, "↩ Already connected to ${device.deviceName}, skipping reconnect")
-                continue
-            }
-
-            Log.d(TAG, "Found USB device: ${device.deviceName} " +
-                    "VID=0x${device.vendorId.toString(16).uppercase()} " +
-                    "PID=0x${device.productId.toString(16).uppercase()}")
-
-            if (!usbManager.hasPermission(device)) {
-                // ── Strategy #1 (priv-app, Android 12+): grantPermission(device, packageName)
-                // Requires MANAGE_USB + priv-app + privapp-permissions XML
-                var granted = tryGrantPermission(device)
-
-                if (!granted) {
-                    // ── Strategy #2 (priv-app, older Android): grantPermission(device)
-                    granted = tryGrantPermissionLegacy(device)
-                }
-
-                if (!granted) {
-                    // ── Strategy #3 (fallback): requestPermission() shows a dialog.
-                    Log.w(TAG, "⚠️ Both silent grant strategies failed — showing permission dialog")
-                    val permissionIntent = PendingIntent.getBroadcast(
-                        context, 0,
-                        Intent(ACTION_USB_PERMISSION),
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_IMMUTABLE else 0
-                    )
-                    usbManager.requestPermission(device, permissionIntent)
-                    continue
-                }
-            } else {
-                Log.d(TAG, "✅ USB permission already held (persisted from previous session)")
-            }
-
-            val connected = connectToDriver(driver)
-            if (connected) {
-                // Successfully connected to the BMI serial device — stop here.
-                // (Single-scale use case; remove this break for multi-scale setups.)
-                Log.d(TAG, "✅ Successfully connected to serial device, stopping probe loop")
-                break
-            }
-        }
-        updateDeviceList()
     }
+
+    /**
+     * Serialized USB bus reconciliation. Attach broadcasts are not guaranteed on
+     * every Android/OEM combination, so the watchdog also runs this method.
+     */
+    private fun refreshUsbConnection(reason: String) {
+        if (isCleanedUp) return
+        synchronized(connectionLock) {
+            try {
+                val attachedDevices = usbManager.deviceList.values
+                // Publish the physical bus state before permission/driver work.
+                // This is important when the sensor was already connected at boot.
+                updateDeviceList()
+                val connectedDevice = serialPort?.device
+                if (connectedDevice != null && attachedDevices.none { it == connectedDevice }) {
+                    Log.w(TAG, "Connected USB device disappeared; reconnecting ($reason)")
+                    closeSerialConnection(notifyDisconnected = true)
+                }
+                if (serialPort != null) {
+                    updateDeviceList()
+                    return
+                }
+
+        val drivers = discoverSerialDrivers()
+        if (drivers.isNotEmpty()) {
+            // USB access is granted per attached device and is revoked by Android after
+            // a reboot/detach. A priv-app can silently re-grant it here; normal apps
+            // fall back to Android's consent dialog. The local registry remembers which
+            // devices were previously approved so every known sensor is retried at boot.
+            val accessibleDrivers = drivers.filter { driver ->
+                val device = driver.device
+                usbManager.hasPermission(device) || ensureUsbPermission(device)
+            }
+
+            // Access is requested for every supported device above. PlayerApp has
+            // one BMI input stream, so it opens the first available serial port.
+            for (driver in accessibleDrivers) {
+                if (serialPort?.device == driver.device) continue
+                if (connectToDriver(driver)) {
+                    updateDeviceList()
+                    return
+                }
+            }
+            updateDeviceList()
+        } else {
+            updateDeviceList()
+        }
+            } catch (t: Throwable) {
+                // A transient USB framework failure must never stop future scans.
+                Log.e(TAG, "USB refresh failed ($reason): ${t.message}", t)
+            }
+        }
+    }
+
+    private fun discoverSerialDrivers(): List<UsbSerialDriver> {
+        val drivers = customProber.findAllDrivers(usbManager).toMutableList()
+        for (device in usbManager.deviceList.values) {
+            if (isNonSerialDevice(device) || drivers.any { it.device == device }) continue
+            probeFallbackDriver(device)?.let(drivers::add)
+        }
+        return drivers
+    }
+
+    private fun usbDeviceFromIntent(intent: Intent): UsbDevice? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        }
+
+    /**
+     * Ensures access for an attached serial device. Returns true only when it may
+     * be opened immediately. A non-privileged app must wait for the permission
+     * receiver after requesting consent.
+     */
+    private fun ensureUsbPermission(device: UsbDevice): Boolean {
+        if (usbManager.hasPermission(device)) return true
+        if (tryGrantPermission(device) || tryGrantPermissionLegacy(device)) {
+            rememberApprovedDevice(device)
+            return true
+        }
+
+        val key = deviceKey(device)
+        if (key in deniedPermissionKeys) return false
+        if (permissionRequestsInFlight.add(key)) {
+            val requestCode = key.hashCode()
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val permissionIntent = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                Intent(ACTION_USB_PERMISSION).setPackage(context.packageName),
+                flags
+            )
+            Log.i(
+                TAG,
+                "Requesting USB access for ${device.deviceName}; previously approved=" +
+                    usbAccessPreferences.contains(TRUSTED_DEVICE_PREFIX + key)
+            )
+            usbManager.requestPermission(device, permissionIntent)
+        }
+        return false
+    }
+
+    /** Stores device identity only; Android's actual USB grant remains OS-owned. */
+    private fun rememberApprovedDevice(device: UsbDevice) {
+        usbAccessPreferences.edit()
+            .putLong(TRUSTED_DEVICE_PREFIX + deviceKey(device), System.currentTimeMillis())
+            .apply()
+    }
+
+    private fun deviceKey(device: UsbDevice): String = listOf(
+        device.vendorId,
+        device.productId,
+        device.deviceClass,
+        device.deviceSubclass,
+        device.deviceProtocol,
+        device.deviceName
+    ).joinToString(":")
 
     /**
      * Returns true if the USB device is definitely NOT a serial/BMI device.
@@ -411,9 +549,12 @@ class UsbSerialManager(private val context: Context) {
      * vendor-specific serial, we allow probing.
      */
     private fun isNonSerialDevice(device: UsbDevice): Boolean {
+        // Fast-path: explicitly blacklisted USB dongles / non-serial receivers
+        if (Pair(device.vendorId, device.productId) in BLACKLISTED_VENDOR_PRODUCT_IDS) return true
+
         val devClass = device.deviceClass
         // Fast-path: device-level class is a known non-serial class
-        if (devClass in NON_SERIAL_DEVICE_CLASSES) return true
+        if (devClass in NON_SERIAL_DEVICE_CLASSES && !isKnownSerialVendor(device)) return true
         // If class is 0, check interfaces
         if (devClass == 0 && device.interfaceCount > 0) {
             var hasSerialLikeInterface = false
@@ -427,10 +568,13 @@ class UsbSerialManager(private val context: Context) {
                 }
             }
             // If no interface looks serial, skip this device
-            if (!hasSerialLikeInterface) return true
+            if (!hasSerialLikeInterface && !isKnownSerialVendor(device)) return true
         }
         return false
     }
+
+    private fun isKnownSerialVendor(device: UsbDevice): Boolean =
+        device.vendorId in KNOWN_SERIAL_VENDOR_IDS
 
     /**
      * Fallback driver probe for unlisted custom/clone USB-Serial devices.
@@ -598,7 +742,20 @@ class UsbSerialManager(private val context: Context) {
                     processReceivedData(data)
                 }
                 override fun onRunError(e: Exception) {
-                    Log.e(TAG, "IO Manager error", e)
+                    Log.e(TAG, "USB serial I/O failed; scheduling recovery", e)
+                    // This callback runs on the serial executor. Move close/reconnect
+                    // work to the watchdog to avoid stopping the I/O manager from its
+                    // own worker thread.
+                    refreshExecutor.execute {
+                        closeSerialConnection(notifyDisconnected = true)
+                        if (!isCleanedUp) {
+                            refreshExecutor.schedule(
+                                { refreshUsbConnection("serial I/O failure") },
+                                USB_RECOVERY_DELAY_SECONDS,
+                                TimeUnit.SECONDS
+                            )
+                        }
+                    }
                 }
             })
             executor.submit(serialIoManager)
@@ -608,8 +765,8 @@ class UsbSerialManager(private val context: Context) {
     // ── Serial data processing ────────────────────────────────────────────────
 
     /**
-     * Accumulate raw bytes and process complete newline-terminated lines.
-     * Data format: "weight,height\n" e.g. "65.5,175\n"
+     * Accumulate raw bytes and process complete newline- or carriage-return-terminated
+     * records. Devices may send CR, LF, CRLF, or the literal escape sequences.
      */
     private fun processReceivedData(data: ByteArray) {
         try {
@@ -619,6 +776,11 @@ class UsbSerialManager(private val context: Context) {
             while (true) {
                 var newlineIdx = dataBuffer.indexOf('\n')
                 var skip = 1
+                val carriageReturnIdx = dataBuffer.indexOf('\r')
+                if (carriageReturnIdx >= 0 && (newlineIdx < 0 || carriageReturnIdx < newlineIdx)) {
+                    newlineIdx = carriageReturnIdx
+                    if (dataBuffer.getOrNull(carriageReturnIdx + 1) == '\n') skip = 2
+                }
                 
                 if (newlineIdx < 0) {
                     newlineIdx = dataBuffer.indexOf("\\n")
@@ -645,7 +807,9 @@ class UsbSerialManager(private val context: Context) {
     /**
      * Process one complete sensor line.
      *
-     * Two things happen per valid line:
+     * Accepted examples include `65.5,175`, `65.5|175`, `weight=65.5kg height=175cm`,
+     * JSON-like `{"weight":65.5,"height":1.75}`, or a single numeric weight. Two things
+     * happen per valid line:
      *  A. [onSensorDataReceived] fires with the raw parsed value
      *     (so existing callers can do real-time monitoring).
      *  B. The reference increment-counter runs internally; when it exceeds
@@ -653,14 +817,10 @@ class UsbSerialManager(private val context: Context) {
      *     (and calibration-applied) values.
      */
     private fun processLine(rawLine: String) {
-        val parts = rawLine.replace("\\n", "").replace("\r", "").split(",")
-        if (parts.isEmpty()) return
-
-        val weightStr = parts[0].trim()
-        val heightStr = if (parts.size >= 2) parts[1].trim() else ""
-
-        if (weightStr.isEmpty() || weightStr == "Power" || !isValidFloat(weightStr)) return
-        val weightRaw = weightStr.toFloatOrNull() ?: return
+        val reading = parseSensorReading(rawLine) ?: return
+        val weightStr = reading.weight.toString()
+        val heightStr = reading.height?.toString().orEmpty()
+        val weightRaw = reading.weight
 
         // ── Zero-weight: reset state and broadcast (0, 0) ─────────────────────
         if (weightRaw <= ZERO_WEIGHT_THRESHOLD) {
@@ -709,6 +869,50 @@ class UsbSerialManager(private val context: Context) {
 
         preViewsVal = weightStr
     }
+
+    private data class ParsedSensorReading(val weight: Float, val height: Float?)
+
+    /**
+     * Parses permissive text records without making a transport-specific format part
+     * of the protocol. Named fields take precedence; otherwise the first numeric
+     * value is weight and the second is height. Unit suffixes are normalized.
+     */
+    private fun parseSensorReading(rawLine: String): ParsedSensorReading? {
+        val line = rawLine.replace("\\r", "").replace("\\n", "").trim()
+        if (line.isBlank() || line.equals("power", ignoreCase = true)) return null
+
+        val weightMatch = WEIGHT_FIELD_PATTERN.find(line)
+        val heightMatch = HEIGHT_FIELD_PATTERN.find(line)
+        val numericValues = NUMBER_PATTERN.findAll(line).map { it.value }.toList()
+        if (weightMatch == null && heightMatch != null) return null
+
+        val weightValue = parseFlexibleNumber(weightMatch?.groupValues?.getOrNull(1)
+            ?: numericValues.getOrNull(0)) ?: return null
+        val weightUnit = weightMatch?.groupValues?.getOrNull(2).orEmpty()
+        val normalizedWeight = when (weightUnit.lowercase()) {
+            "g", "gram", "grams" -> weightValue / 1000f
+            "lb", "lbs" -> weightValue * 0.45359237f
+            else -> weightValue
+        }
+
+        val heightValue = parseFlexibleNumber(heightMatch?.groupValues?.getOrNull(1)
+            ?: numericValues.getOrNull(1))
+        val heightUnit = heightMatch?.groupValues?.getOrNull(2).orEmpty()
+        val normalizedHeight = heightValue?.let { value ->
+            when (heightUnit.lowercase()) {
+                "m", "meter", "meters" -> value * 100f
+                "mm" -> value / 10f
+                "in", "inch", "inches" -> value * 2.54f
+                // Height supplied as 1.75 without a unit is conventionally metres.
+                "" -> if (value in 0.5f..3f) value * 100f else value
+                else -> value
+            }
+        }
+        return ParsedSensorReading(normalizedWeight, normalizedHeight)
+    }
+
+    private fun parseFlexibleNumber(value: String?): Float? =
+        value?.trim()?.replace(',', '.')?.toFloatOrNull()
 
     /**
      * Mirrors SerialConsoleActivity.findDuplicateValue():
@@ -778,34 +982,42 @@ class UsbSerialManager(private val context: Context) {
     }
 
     // ── Connection lifecycle ──────────────────────────────────────────────────
-    
+
     fun isConnected(): Boolean {
         return serialPort != null
     }
 
-    fun disconnect() {
-        try {
-            serialIoManager?.stop()
+    /** Closes only the direct USB resources and leaves the manager able to recover. */
+    private fun closeSerialConnection(notifyDisconnected: Boolean) {
+        synchronized(connectionLock) {
+            runCatching { serialIoManager?.stop() }
             serialIoManager = null
-            serialPort?.close()
+            runCatching { serialPort?.close() }
             serialPort = null
-            usbConnection?.close()
+            runCatching { usbConnection?.close() }
             usbConnection = null
+            dataBuffer.setLength(0)
             resetAlgorithmState()
             preViewsVal = ""
-            onSensorDataReceived?.invoke(0f, 0f)
-            // Notify callers that the scale is gone so they can exit "measuring" UI state
-            onSensorStable?.invoke(0f, 0f)
-        } catch (e: Exception) {
-            Log.e(TAG, "Disconnect error", e)
+            _usbStatusFlow.update { it.copy(connectedArduinosCount = 0) }
+            if (notifyDisconnected) {
+                onSensorDataReceived?.invoke(0f, 0f)
+                onSensorStable?.invoke(0f, 0f)
+            }
         }
+    }
+
+    fun disconnect() {
+        closeSerialConnection(notifyDisconnected = true)
     }
 
     fun cleanup() {
         try {
+            isCleanedUp = true
             disconnect()
             context.unregisterReceiver(usbReceiver)
             executor.shutdown()
+            refreshExecutor.shutdownNow()
         } catch (e: Exception) {
             Log.e(TAG, "Cleanup error", e)
         }
