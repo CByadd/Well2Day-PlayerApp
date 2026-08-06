@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
@@ -47,6 +48,22 @@ data class UsbStatus(
     /** Devices with a serial port that has been opened successfully. */
     val connectedArduinosCount: Int = 0,
     val receivedDataBytes: String = ""
+)
+
+enum class HeightValidationReason {
+    VALID,
+    OUT_OF_RANGE,
+    SENSOR_TIMEOUT,
+    SENSOR_NOISE,
+    CALIBRATION_ERROR,
+    UNSTABLE_READING
+}
+
+data class HeightValidationResult(
+    val rawHeight: Float,
+    val calibratedHeight: Float,
+    val isValid: Boolean,
+    val reason: HeightValidationReason
 )
 /**
  * USB Serial Manager for BMI Machine
@@ -102,9 +119,10 @@ class UsbSerialManager(private val context: Context) {
         /** Weights at or below this value are treated as "nobody on scale". */
         private const val ZERO_WEIGHT_THRESHOLD = 0.5f
 
-        /** Valid height range in cm — outside this range height is reported as 0. */
-        private const val MIN_HEIGHT_CM = 140f
-        private const val MAX_HEIGHT_CM = 200f
+        /** Valid height range in cm — supports children (80 cm) to tall adults (250 cm). */
+        const val MIN_HEIGHT_CM = 80f
+        const val MAX_HEIGHT_CM = 250f
+        const val MAX_HEIGHT_VARIANCE_CM = 5.0f
 
         private val NUMBER_PATTERN = Regex("[-+]?\\d+(?:[.,]\\d+)?")
         private val WEIGHT_FIELD_PATTERN = Regex(
@@ -256,6 +274,18 @@ class UsbSerialManager(private val context: Context) {
      */
     private fun updateDeviceList() {
         val devices = usbManager.deviceList.values.map { dev ->
+            Log.d(TAG, """
+                Found USB Device:
+                VID=${dev.vendorId} (0x${dev.vendorId.toString(16)})
+                PID=${dev.productId} (0x${dev.productId.toString(16)})
+                Class=${dev.deviceClass}
+                Subclass=${dev.deviceSubclass}
+                Protocol=${dev.deviceProtocol}
+                Manufacturer=${dev.manufacturerName}
+                Product=${dev.productName}
+                DeviceName=${dev.deviceName}
+                Interface Count=${dev.interfaceCount}
+            """.trimIndent())
             val serialCandidate = !isNonSerialDevice(dev)
             UsbDeviceInfo(
                 name = dev.deviceName ?: "Unknown",
@@ -314,6 +344,7 @@ class UsbSerialManager(private val context: Context) {
      * Weight is raw; height has calibration applied and is 0 if out-of-range.
      */
     private var onSensorStable: ((weight: Float, height: Float) -> Unit)? = null
+    private var onSensorStableResult: ((weight: Float, heightResult: HeightValidationResult) -> Unit)? = null
 
     private var onLogMessage: ((message: String) -> Unit)? = null
 
@@ -405,6 +436,10 @@ class UsbSerialManager(private val context: Context) {
         this.onSensorStable = callback
     }
 
+    fun setOnSensorStableResult(callback: (weight: Float, heightResult: HeightValidationResult) -> Unit) {
+        this.onSensorStableResult = callback
+    }
+
     fun setOnLogMessage(callback: (message: String) -> Unit) {
         this.onLogMessage = callback
     }
@@ -475,6 +510,14 @@ class UsbSerialManager(private val context: Context) {
         for (device in usbManager.deviceList.values) {
             if (isNonSerialDevice(device) || drivers.any { it.device == device }) continue
             probeFallbackDriver(device)?.let(drivers::add)
+        }
+        for (driver in drivers) {
+            Log.d(TAG, """
+                Driver Found:
+                driverClass=${driver.javaClass.name}
+                VID=${driver.device.vendorId} (0x${driver.device.vendorId.toString(16)})
+                PID=${driver.device.productId} (0x${driver.device.productId.toString(16)})
+            """.trimIndent())
         }
         return drivers
     }
@@ -701,30 +744,98 @@ class UsbSerialManager(private val context: Context) {
      * a 2.4 GHz wireless dongle was plugged in and granted permission.
      */
     private fun connectToDriver(driver: UsbSerialDriver): Boolean {
+        Log.d(TAG, "Trying to connect...")
+        Log.d(TAG, "Driver has ${driver.ports.size} ports")
+        driver.ports.forEachIndexed { index, port ->
+            Log.d(TAG, "Port $index = $port (portNumber=${port.portNumber})")
+        }
+
         return try {
             val connection = usbManager.openDevice(driver.device) ?: run {
                 Log.w(TAG, "openDevice returned null for ${driver.device.deviceName}")
                 return false
             }
             usbConnection = connection
+
+            // ── Requirement 1: Log every USB interface and endpoint ────────────────
+            val device = driver.device
+            Log.d(TAG, "=== USB INTERFACE & ENDPOINT DUMP for VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)} ===")
+            Log.d(TAG, "Device Name: ${device.deviceName}, Interface Count: ${device.interfaceCount}")
+            for (i in 0 until device.interfaceCount) {
+                val iface = device.getInterface(i)
+                Log.d(TAG, "Interface $i: Class=${iface.interfaceClass}, Subclass=${iface.interfaceSubclass}, Protocol=${iface.interfaceProtocol}, EndpointCount=${iface.endpointCount}")
+                for (j in 0 until iface.endpointCount) {
+                    val ep = iface.getEndpoint(j)
+                    val dirStr = if (ep.direction == UsbConstants.USB_DIR_IN) "IN" else "OUT"
+                    val typeStr = when (ep.type) {
+                        UsbConstants.USB_ENDPOINT_XFER_BULK -> "Bulk"
+                        UsbConstants.USB_ENDPOINT_XFER_INT -> "Interrupt"
+                        UsbConstants.USB_ENDPOINT_XFER_CONTROL -> "Control"
+                        UsbConstants.USB_ENDPOINT_XFER_ISOC -> "Isochronous"
+                        else -> "Unknown(${ep.type})"
+                    }
+                    Log.d(TAG, "  Endpoint $j: Address=0x${ep.address.toString(16)}, Direction=$dirStr, Type=$typeStr, MaxPacketSize=${ep.maxPacketSize}, Interval=${ep.interval}")
+                }
+            }
+            Log.d(TAG, "===============================================================")
+
             if (driver.ports.isEmpty()) {
                 Log.w(TAG, "No ports available on ${driver.device.deviceName}")
                 connection.close()
                 usbConnection = null
                 return false
             }
-            serialPort = driver.ports[0]
-            serialPort?.let { port ->
-                port.open(connection)
-                port.setParameters(BAUD_RATE, DATA_BITS, STOP_BITS, PARITY)
-                startIoManager()
+
+            // ── Requirement 4: Try every available port ─────────────────────────────
+            var successfullyOpenedPort: UsbSerialPort? = null
+            Log.d(TAG, "=== DIAGNOSTIC MULTI-PORT SCAN START (${driver.ports.size} ports) ===")
+            
+            for ((index, port) in driver.ports.withIndex()) {
+                Log.d(TAG, "Testing Port $index: $port")
+                try {
+                    port.open(connection)
+                    port.setParameters(BAUD_RATE, DATA_BITS, STOP_BITS, PARITY)
+                    
+                    // ── Requirement 3: Enable DTR and RTS ──────────────────────────────
+                    try {
+                        port.dtr = true
+                        Log.d(TAG, "✅ [Port $index] DTR set to true successfully")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ [Port $index] Exception setting DTR: ${e.message}", e)
+                    }
+
+                    try {
+                        port.rts = true
+                        Log.d(TAG, "✅ [Port $index] RTS set to true successfully")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ [Port $index] Exception setting RTS: ${e.message}", e)
+                    }
+
+                    successfullyOpenedPort = port
+                    serialPort = port
+                    Log.d(TAG, "Port Opened Successfully for Port $index")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed opening Port $index: ${e.message}", e)
+                    runCatching { port.close() }
+                }
             }
-            Log.d(TAG, "✅ Port opened: ${driver.device.deviceName}")
-            true
+            Log.d(TAG, "=== DIAGNOSTIC MULTI-PORT SCAN END ===")
+
+            if (successfullyOpenedPort != null) {
+                startIoManager()
+                true
+            } else {
+                Log.e(TAG, "All ports failed to open")
+                connection.close()
+                usbConnection = null
+                false
+            }
         } catch (e: Exception) {
             // Broad catch is intentional — UsbSerialException, RuntimeException, etc.
             // all indicate the device is not a valid serial target.
-            Log.e(TAG, "connectToDriver failed for VID=0x${driver.device.vendorId.toString(16).uppercase()}: ${e.message}")
+            Log.e(TAG, "connectToDriver failed: Exception stacktrace", e)
+            Log.d(TAG, "Exception stacktrace: ${Log.getStackTraceString(e)}")
             // Clean up partial state so a retry won't be blocked
             runCatching { serialPort?.close() }
             serialPort = null
@@ -737,15 +848,27 @@ class UsbSerialManager(private val context: Context) {
 
     private fun startIoManager() {
         serialPort?.let { port ->
+            Log.d(TAG, "[SerialInputOutputManager] Preparing to create SerialInputOutputManager for port=${port.portNumber}...")
+            Log.d(TAG, "[SerialInputOutputManager] Executor state: isShutdown=${executor.isShutdown}, isTerminated=${executor.isTerminated}")
+
             serialIoManager = SerialInputOutputManager(port, object : SerialInputOutputManager.Listener {
                 override fun onNewData(data: ByteArray) {
+                    val currentThreadName = Thread.currentThread().name
+                    val hexStr = data.joinToString(" ") { "%02X".format(it) }
+                    val utf8Str = String(data, Charsets.UTF_8)
+                    Log.d(TAG, """
+                        onNewData() [Received on Thread: $currentThreadName]
+                        RAW BYTES: ${data.contentToString()} (${data.size} bytes)
+                        HEX: $hexStr
+                        STRING: $utf8Str
+                    """.trimIndent())
                     processReceivedData(data)
                 }
+
                 override fun onRunError(e: Exception) {
-                    Log.e(TAG, "USB serial I/O failed; scheduling recovery", e)
-                    // This callback runs on the serial executor. Move close/reconnect
-                    // work to the watchdog to avoid stopping the I/O manager from its
-                    // own worker thread.
+                    val currentThreadName = Thread.currentThread().name
+                    Log.e(TAG, "USB serial I/O failed on Thread [$currentThreadName]; scheduling recovery", e)
+                    Log.d(TAG, "onRunError Stacktrace: ${Log.getStackTraceString(e)}")
                     refreshExecutor.execute {
                         closeSerialConnection(notifyDisconnected = true)
                         if (!isCleanedUp) {
@@ -758,7 +881,10 @@ class UsbSerialManager(private val context: Context) {
                     }
                 }
             })
+
+            Log.d(TAG, "[SerialInputOutputManager] Submitting SerialInputOutputManager to executor 'usb-serial-io'...")
             executor.submit(serialIoManager)
+            Log.d(TAG, "[SerialInputOutputManager] Submitted to executor successfully.")
         }
     }
 
@@ -793,8 +919,13 @@ class UsbSerialManager(private val context: Context) {
                 dataBuffer.delete(0, newlineIdx + skip)
                 
                 if (line.isNotBlank()) {
-                    _usbStatusFlow.update { it.copy(receivedDataBytes = line.trim()) }
-                    processLine(line.trim())
+                    val trimmedLine = line.trim()
+                    println("==================================================")
+                    println("[LIVE_RAW_DATA] >>> $trimmedLine <<<")
+                    println("==================================================")
+                    Log.d(TAG, "processReceivedData() Decoded Line: $trimmedLine")
+                    _usbStatusFlow.update { it.copy(receivedDataBytes = trimmedLine) }
+                    processLine(trimmedLine)
                 }
             }
         } catch (e: Exception) {
@@ -821,13 +952,18 @@ class UsbSerialManager(private val context: Context) {
         val weightStr = reading.weight.toString()
         val heightStr = reading.height?.toString().orEmpty()
         val weightRaw = reading.weight
+        val rawHeight = heightStr.toFloatOrNull() ?: 0f
+
+        Log.d(TAG, "processLine() Weight=$weightRaw Height=$rawHeight")
 
         // ── Zero-weight: reset state and broadcast (0, 0) ─────────────────────
         if (weightRaw <= ZERO_WEIGHT_THRESHOLD) {
             if (preViewsVal != "-1") {
                 Log.d(TAG, "↩ Zero-weight — resetting reference state")
                 resetAlgorithmState()
+                Log.d(TAG, "Calling onSensorDataReceived()")
                 onSensorDataReceived?.invoke(0f, 0f)
+                Log.d(TAG, "Calling onSensorStable()")
                 onSensorStable?.invoke(0f, 0f)  // Let callers know scale is empty
             }
             preViewsVal = "-1"
@@ -835,7 +971,7 @@ class UsbSerialManager(private val context: Context) {
         }
 
         // ── Valid weight: always fire raw callback ─────────────────────────────
-        val rawHeight = heightStr.toFloatOrNull() ?: 0f
+        Log.d(TAG, "Calling onSensorDataReceived()")
         onSensorDataReceived?.invoke(weightRaw, rawHeight)
 
         // ── Reference stability tracking ───────────────────────────────────────
@@ -881,6 +1017,15 @@ class UsbSerialManager(private val context: Context) {
         val line = rawLine.replace("\\r", "").replace("\\n", "").trim()
         if (line.isBlank() || line.equals("power", ignoreCase = true)) return null
 
+        // Guard against header text, boot banners, dates, and non-sensor text containing words
+        if (line.any { it.isLetter() }) {
+            val hasValidField = WEIGHT_FIELD_PATTERN.containsMatchIn(line) || HEIGHT_FIELD_PATTERN.containsMatchIn(line)
+            if (!hasValidField) {
+                Log.d(TAG, "Ignoring non-sensor text line: '$line'")
+                return null
+            }
+        }
+
         val weightMatch = WEIGHT_FIELD_PATTERN.find(line)
         val heightMatch = HEIGHT_FIELD_PATTERN.find(line)
         val numericValues = NUMBER_PATTERN.findAll(line).map { it.value }.toList()
@@ -919,42 +1064,79 @@ class UsbSerialManager(private val context: Context) {
      * Returns the height string that appeared 2–5 times in the list.
      * Prefers the value with the highest frequency.  Returns "" if none.
      */
-    private fun findDuplicateValue(list: List<String>): String {
-        if (list.isEmpty()) return ""
-        val freq = mutableMapOf<String, Int>()
-        for (s in list) freq[s] = (freq[s] ?: 0) + 1
-        return freq.entries
-            .filter { it.value in 2..5 }
-            .maxByOrNull { it.value }
-            ?.key ?: ""
-    }
-
-    /**
-     * Apply height calibration (HeightCalibrationStorage) and range-check,
-     * then invoke [onSensorStable].
-     *
-     * Calibration mirrors reference app:
-     *   sign "+"  → fVal = machineOffset + rawSensorHeight
-     *   sign "-"  → fVal = rawSensorHeight - machineOffset
-     */
-    private fun emitStableReading(weightKg: Float, rawHeightStr: String) {
+    fun validateHeight(rawHeightStr: String, heightSamples: List<String> = emptyList()): HeightValidationResult {
         val rawHeight = rawHeightStr.toFloatOrNull() ?: 0f
-        val offset = HeightCalibrationStorage.getHeightCalibration(context)
-        val sign   = HeightCalibrationStorage.getCalibrationSign(context)
-        val calibrated = if (sign == "-") rawHeight - offset else offset + rawHeight
-
-        val validHeight = if (calibrated < MIN_HEIGHT_CM || calibrated > MAX_HEIGHT_CM) {
-            Log.w(TAG, "⚠️ Height out of valid range: $calibrated cm — reporting 0")
-            0f
-        } else {
-            calibrated
+        if (rawHeight <= 0f) {
+            return HeightValidationResult(
+                rawHeight = 0f,
+                calibratedHeight = 0f,
+                isValid = false,
+                reason = HeightValidationReason.SENSOR_TIMEOUT
+            )
         }
 
+        val offset = HeightCalibrationStorage.getHeightCalibration(context)
+        val sign = HeightCalibrationStorage.getCalibrationSign(context)
+        val calibrated = if (sign == "-") rawHeight - offset else offset + rawHeight
+
+        if (calibrated < MIN_HEIGHT_CM || calibrated > MAX_HEIGHT_CM) {
+            return HeightValidationResult(
+                rawHeight = rawHeight,
+                calibratedHeight = calibrated,
+                isValid = false,
+                reason = HeightValidationReason.OUT_OF_RANGE
+            )
+        }
+
+        if (heightSamples.size >= 2) {
+            val floatSamples = heightSamples.mapNotNull { it.toFloatOrNull() }
+            if (floatSamples.size >= 2) {
+                val minS = floatSamples.minOrNull() ?: 0f
+                val maxS = floatSamples.maxOrNull() ?: 0f
+                if ((maxS - minS) > MAX_HEIGHT_VARIANCE_CM) {
+                    return HeightValidationResult(
+                        rawHeight = rawHeight,
+                        calibratedHeight = calibrated,
+                        isValid = false,
+                        reason = HeightValidationReason.UNSTABLE_READING
+                    )
+                }
+            }
+        }
+
+        return HeightValidationResult(
+            rawHeight = rawHeight,
+            calibratedHeight = calibrated,
+            isValid = true,
+            reason = HeightValidationReason.VALID
+        )
+    }
+
+    private fun findDuplicateValue(list: List<String>): String {
+        val validList = list.filter { isValidFloat(it) && (it.toFloatOrNull() ?: 0f) > 0f }
+        if (validList.isEmpty()) return ""
+        val freq = mutableMapOf<String, Int>()
+        for (s in validList) freq[s] = (freq[s] ?: 0) + 1
+        val maxFreqEntry = freq.entries.maxByOrNull { it.value }
+        if (maxFreqEntry != null && maxFreqEntry.value >= 2) {
+            return maxFreqEntry.key
+        }
+        val sortedFloats = validList.mapNotNull { it.toFloatOrNull() }.sorted()
+        if (sortedFloats.isNotEmpty()) {
+            val median = sortedFloats[sortedFloats.size / 2]
+            return String.format(java.util.Locale.US, "%.1f", median)
+        }
+        return validList.last()
+    }
+
+    private fun emitStableReading(weightKg: Float, rawHeightStr: String) {
+        val heightResult = validateHeight(rawHeightStr, repetedHeight)
         Log.d(TAG,
             "✅ STABLE LOCKED — Weight: $weightKg kg | " +
-            "rawHeight: $rawHeight → calibrated: $calibrated → sent: $validHeight cm"
+            "rawHeight: ${heightResult.rawHeight} → calibrated: ${heightResult.calibratedHeight} → valid: ${heightResult.isValid} (${heightResult.reason})"
         )
-        onSensorStable?.invoke(weightKg, validHeight)
+        onSensorStableResult?.invoke(weightKg, heightResult)
+        onSensorStable?.invoke(weightKg, heightResult.calibratedHeight)
     }
 
     /** Reset only the algorithm state. Called on zero-weight. */

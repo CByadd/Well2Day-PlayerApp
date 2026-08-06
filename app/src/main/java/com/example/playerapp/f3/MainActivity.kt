@@ -41,6 +41,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.foundation.Image
 import androidx.compose.ui.layout.ContentScale
 import coil.ImageLoader
@@ -602,6 +603,10 @@ fun F3PlayerScreen(
     
     // Track BMI detection state - show loading when detection starts
     var isDetectingBMI by remember { mutableStateOf(false) }
+    var isRetryingHeight by remember { mutableStateOf(false) }
+    var heightRetryStartTime by remember { mutableLongStateOf(0L) }
+    var lockedWeightForRetry by remember { mutableFloatStateOf(0f) }
+    var lastHeightValidationReason by remember { mutableStateOf(com.example.playerapp.data.HeightValidationReason.VALID) }
     
     // Track if flow is active (BMI data has been captured)
     var isFlowActive by remember { mutableStateOf(false) }
@@ -655,6 +660,7 @@ fun F3PlayerScreen(
     var showConfigError by remember { mutableStateOf(false) }
     var configErrorTriggered by remember { mutableStateOf(false) }
     var bottomToastMessage by remember { mutableStateOf<String?>(null) }
+    var topWarningBannerMessage by remember { mutableStateOf<String?>(null) }
     
     // Flow drawer enabled state - initialize from persisted info
     var flowDrawerEnabled by remember {
@@ -927,6 +933,8 @@ fun F3PlayerScreen(
         capturedWeight = null
         capturedHeight = null
         isDetectingBMI = false
+        isRetryingHeight = false
+        lockedWeightForRetry = 0f
         currentBMIScreen = null
         flowStartTime = null
         currentBmiId = null
@@ -2031,15 +2039,37 @@ fun F3PlayerScreen(
     // Setup USB Serial Manager for F3 — when F1, F2 or PlayerOnly modes are active
     LaunchedEffect(isF1ModeActive, isF2ModeActive) {
         // Add sensor stable callback - triggers instantly when UsbSerialManager locks in a value (10 matching readings)
-        usbSerialManager.setOnSensorStable { weight, height ->
+        usbSerialManager.setOnSensorStableResult { weight, heightResult ->
             if (isDetectingBMI && !isFlowActive && weight >= 3.0f) {
-                if (height == 0f && heightCalibrationEnabled) {
-                    println("DEBUG: F3 - Height not detected, prompting user to try again.")
-                    isDetectingBMI = false
-                    paymentFlowState = PaymentFlowState.IDLE
-                    bottomToastMessage = "Height not detected, try again"
+                if (heightResult.isValid) {
+                    println("DEBUG: F3 - Height & Weight valid! Capturing BMI (weight=${weight}kg, height=${heightResult.calibratedHeight}cm)...")
+                    isRetryingHeight = false
+                    topWarningBannerMessage = null
+                    processFirstValidReading(weight, heightResult.calibratedHeight)
+                } else if (heightCalibrationEnabled) {
+                    if (heightResult.reason == com.example.playerapp.data.HeightValidationReason.SENSOR_TIMEOUT) {
+                        println("DEBUG: F3 - Height sensor timeout (hardware issue). Resetting flow...")
+                        isRetryingHeight = false
+                        isDetectingBMI = false
+                        paymentFlowState = PaymentFlowState.IDLE
+                        bottomToastMessage = "Height sensor not detected"
+                    } else {
+                        println("DEBUG: F3 - Measurement quality issue (${heightResult.reason}). Starting 3s retry and showing top warning banner...")
+                        isRetryingHeight = true
+                        heightRetryStartTime = System.currentTimeMillis()
+                        lockedWeightForRetry = weight
+                        lastHeightValidationReason = heightResult.reason
+                        topWarningBannerMessage = "Height may not have been measured accurately. Results may vary. Please stand straight and try again."
+                    }
                 } else {
-                    println("DEBUG: F3 - Sensor stable lock acquired (weight=${weight}kg), capturing BMI instantly...")
+                    println("DEBUG: F3 - Height calibration disabled, processing with weight=${weight}kg")
+                    processFirstValidReading(weight, heightResult.calibratedHeight)
+                }
+            }
+        }
+        usbSerialManager.setOnSensorStable { weight, height ->
+            if (!isRetryingHeight && isDetectingBMI && !isFlowActive && weight >= 3.0f) {
+                if (height > 0f || !heightCalibrationEnabled) {
                     processFirstValidReading(weight, height)
                 }
             }
@@ -2047,6 +2077,43 @@ fun F3PlayerScreen(
 
         // Add sensor data callback - for real-time monitoring and instant feedback UI
         usbSerialManager.setOnSensorDataReceived { weight, height ->
+            // Height retry evaluation
+            if (isRetryingHeight && !isFlowActive) {
+                if (weight >= 3.0f) {
+                    val currentTime = System.currentTimeMillis()
+                    val elapsed = currentTime - heightRetryStartTime
+                    val result = usbSerialManager.validateHeight(height.toString())
+                    if (result.isValid) {
+                        println("DEBUG: F3 - Valid height acquired during 3s retry! height=${result.calibratedHeight}cm")
+                        isRetryingHeight = false
+                        topWarningBannerMessage = null
+                        processFirstValidReading(lockedWeightForRetry, result.calibratedHeight)
+                        return@setOnSensorDataReceived
+                    } else if (elapsed >= 3000L) {
+                        println("DEBUG: F3 - Height retry completed 3s window. Final reason: ${result.reason}")
+                        isRetryingHeight = false
+                        if (result.reason == com.example.playerapp.data.HeightValidationReason.SENSOR_TIMEOUT) {
+                            isDetectingBMI = false
+                            paymentFlowState = PaymentFlowState.IDLE
+                            bottomToastMessage = "Height sensor not detected"
+                        } else {
+                            isDetectingBMI = false
+                            paymentFlowState = PaymentFlowState.IDLE
+                            topWarningBannerMessage = "Height may not have been measured accurately. Results may vary. Please stand straight and try again."
+                        }
+                        return@setOnSensorDataReceived
+                    }
+                } else {
+                    println("DEBUG: F3 - User stepped off during height retry")
+                    isRetryingHeight = false
+                    isDetectingBMI = false
+                    paymentFlowState = PaymentFlowState.IDLE
+                    topWarningBannerMessage = null
+                    bottomToastMessage = null
+                    return@setOnSensorDataReceived
+                }
+            }
+
             // If the app is in PlayerOnly mode, show the toast if weight >= 3.0f
             if (!isF1ModeActive && !isF2ModeActive) {
                 if (weight >= 3.0f) {
@@ -2328,6 +2395,25 @@ fun F3PlayerScreen(
                 },
                 onShowFortune = {
                     paymentFlowState = PaymentFlowState.FORTUNE_SHOWING
+                    // Inject mock data if empty or missing fortune details
+                    val existing = bmiData ?: emptyMap()
+                    val fortuneMsg = (existing["fortuneMessage"] as? String)?.takeIf { it.isNotBlank() }
+                        ?: (existing["fortune"] as? String)?.takeIf { it.isNotBlank() }
+                        ?: "Your determination today will shape your success tomorrow. Believe in your journey!"
+                    val healthTip = (existing["healthTip"] as? String)?.takeIf { it.isNotBlank() }
+                        ?: "Stay consistent, trust the process, and good things will follow."
+                    
+                    bmiData = mapOf(
+                        "weight" to (existing["weight"] ?: 70.0),
+                        "height" to (existing["height"] ?: 175.0),
+                        "bmi" to (existing["bmi"] ?: 22.8),
+                        "category" to (existing["category"] ?: "Normal"),
+                        "healthTip" to healthTip,
+                        "isHeightValid" to true,
+                        "fortune" to fortuneMsg,
+                        "fortuneMessage" to fortuneMsg,
+                        "webUrl" to (existing["webUrl"] ?: "https://well2day.in")
+                    )
                     showTroubleshootMenu = false
                 },
                 onShowProcessing = {
@@ -3116,6 +3202,60 @@ fun F3PlayerScreen(
         println("DEBUG: F3 - Not showing BMI modal, flow type: '$currentFlowType'")
     }
     
+    // Top Warning Banner Overlay (zIndex = 20000f, overlays all dialogs and screens)
+    LaunchedEffect(topWarningBannerMessage) {
+        if (topWarningBannerMessage != null) {
+            kotlinx.coroutines.delay(4000L) // Auto dismiss after 4 seconds
+            topWarningBannerMessage = null
+        }
+    }
+
+    androidx.compose.animation.AnimatedVisibility(
+        visible = topWarningBannerMessage != null,
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(20000f),
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically(initialOffsetY = { -it }),
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically(targetOffsetY = { -it })
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 16.dp, start = 16.dp, end = 16.dp),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFFFFFBEB), // Amber-50 warning container
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF59E0B)), // Amber-500 border
+                tonalElevation = 8.dp,
+                shadowElevation = 12.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .fillMaxWidth(0.9f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Warning",
+                        tint = Color(0xFFD97706),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = topWarningBannerMessage ?: "",
+                        color = Color(0xFF92400E),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        lineHeight = 18.sp
+                    )
+                }
+            }
+        }
+    }
+
     androidx.compose.animation.AnimatedVisibility(
         visible = bottomToastMessage != null,
         modifier = Modifier

@@ -69,23 +69,23 @@ fun RedesignedFortuneScreen(
     }
 
     // Adaptive sizes
-    val titleFontSize = if (isCompact) 28.sp else 42.sp
-    val subtitleFontSize = if (isCompact) 12.sp else 18.sp
-    val cardPadding = if (isCompact) 16.dp else 24.dp
-    val insightTitleFontSize = if (isCompact) 18.sp else 28.sp
-    val fortuneMsgFontSize = if (isCompact) 16.sp else 24.sp
-    val cookieBoxSize = if (isCompact) 100.dp else 140.dp
-    val cookieIconSize = if (isCompact) 70.dp else 100.dp
-    val dividerHeight = if (isCompact) 120.dp else 160.dp
-    val gapSize = if (isCompact) 16.dp else 32.dp
-    val healthTipFontSize = if (isCompact) 12.sp else 15.sp
-    val starBoxSize = if (isCompact) 32.dp else 40.dp
-    val starIconSize = if (isCompact) 18.dp else 24.dp
-    val cloudBoxSize = if (isCompact) 60.dp else 80.dp
-    val cloudIconSize = if (isCompact) 30.dp else 40.dp
-    val cloudTitleSize = if (isCompact) 14.sp else 20.sp
-    val cloudSubSize = if (isCompact) 11.sp else 15.sp
-    val qrBoxSize = if (isCompact) 90.dp else 120.dp
+    val titleFontSize = if (isCompact) 22.sp else 30.sp
+    val subtitleFontSize = if (isCompact) 11.sp else 15.sp
+    val cardPadding = if (isCompact) 14.dp else 20.dp
+    val insightTitleFontSize = if (isCompact) 15.sp else 22.sp
+    val fortuneMsgFontSize = if (isCompact) 14.sp else 18.sp
+    val cookieBoxSize = if (isCompact) 90.dp else 120.dp
+    val cookieIconSize = if (isCompact) 60.dp else 85.dp
+    val dividerHeight = if (isCompact) 100.dp else 135.dp
+    val gapSize = if (isCompact) 14.dp else 24.dp
+    val healthTipFontSize = if (isCompact) 11.sp else 13.sp
+    val starBoxSize = if (isCompact) 28.dp else 34.dp
+    val starIconSize = if (isCompact) 16.dp else 20.dp
+    val cloudBoxSize = if (isCompact) 52.dp else 68.dp
+    val cloudIconSize = if (isCompact) 26.dp else 34.dp
+    val cloudTitleSize = if (isCompact) 13.sp else 16.sp
+    val cloudSubSize = if (isCompact) 10.sp else 13.sp
+    val qrBoxSize = if (isCompact) 80.dp else 105.dp
 
     // Colors from the design
     val bgColor = Color(0xFFF7F8FA) // Light grayish background
@@ -164,7 +164,7 @@ fun RedesignedFortuneScreen(
                     // Top Row of the card
                     Text(
                         text = "CURRENT INSIGHT",
-                        fontSize = if (isCompact) 10.sp else 12.sp,
+                        fontSize = if (isCompact) 9.sp else 11.sp,
                         fontFamily = ManropeFontFamily,
                         fontWeight = FontWeight.Bold,
                         color = grayTextColor,
@@ -251,7 +251,7 @@ fun RedesignedFortuneScreen(
                                 fontFamily = ManropeFontFamily,
                                 fontWeight = FontWeight.Bold,
                                 color = darkTextColor,
-                                lineHeight = if (isCompact) 26.sp else 34.sp
+                                lineHeight = if (isCompact) 19.sp else 24.sp
                             )
                             
                             Spacer(modifier = Modifier.height(if (isCompact) 16.dp else 24.dp))
@@ -288,7 +288,7 @@ fun RedesignedFortuneScreen(
                                     fontSize = healthTipFontSize,
                                     fontFamily = ManropeFontFamily,
                                     color = grayTextColor,
-                                    lineHeight = if (isCompact) 18.sp else 22.sp
+                                    lineHeight = if (isCompact) 15.sp else 18.sp
                                 )
                             }
                         }
@@ -346,7 +346,7 @@ fun RedesignedFortuneScreen(
                                 fontSize = cloudSubSize,
                                 fontFamily = ManropeFontFamily,
                                 color = grayTextColor,
-                                lineHeight = if (isCompact) 16.sp else 22.sp
+                                lineHeight = if (isCompact) 14.sp else 17.sp
                             )
                         }
 
@@ -376,12 +376,12 @@ fun RedesignedFortuneScreen(
 
             Text(
                 text = "You Can Step Off from the Machine",
-                fontSize = if (isCompact) 13.sp else 15.sp,
+                fontSize = if (isCompact) 11.sp else 13.sp,
                 fontFamily = ManropeFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontStyle = FontStyle.Italic,
                 color = grayTextColor,
-                lineHeight = if (isCompact) 18.sp else 22.sp
+                lineHeight = if (isCompact) 15.sp else 18.sp
             )
         }
     }
