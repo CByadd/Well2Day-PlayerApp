@@ -607,6 +607,8 @@ fun F3PlayerScreen(
     var heightRetryStartTime by remember { mutableLongStateOf(0L) }
     var lockedWeightForRetry by remember { mutableFloatStateOf(0f) }
     var lastHeightValidationReason by remember { mutableStateOf(com.example.playerapp.data.HeightValidationReason.VALID) }
+    var failedReadingWeightLock by remember { mutableStateOf(false) }
+    var failedReadingLowWeightStartTime by remember { mutableLongStateOf(0L) }
     
     // Track if flow is active (BMI data has been captured)
     var isFlowActive by remember { mutableStateOf(false) }
@@ -707,7 +709,10 @@ fun F3PlayerScreen(
     val anyModalShowing = showQRModal || showBMIDataModal || showFortuneModal
     val flowDrawerHasAssets = flowDrawerAssets.hasRenderableAssets()
     val drawerAllowedByRenderedScreen =
-        currentBMIScreen == F1Screen.BMI || currentBMIScreen == F1Screen.FORTUNE
+        paymentFlowState == PaymentFlowState.BMI_SHOWING ||
+        paymentFlowState == PaymentFlowState.FORTUNE_SHOWING ||
+        currentBMIScreen == F1Screen.BMI ||
+        currentBMIScreen == F1Screen.FORTUNE
     val shouldShowDrawer = flowDrawerEnabled && (
         (anyModalShowing && drawerAllowedByRenderedScreen) ||
             (showDrawerInDev && anyModalShowing)
@@ -934,6 +939,8 @@ fun F3PlayerScreen(
         capturedHeight = null
         isDetectingBMI = false
         isRetryingHeight = false
+        failedReadingWeightLock = false
+        failedReadingLowWeightStartTime = 0L
         lockedWeightForRetry = 0f
         currentBMIScreen = null
         flowStartTime = null
@@ -947,7 +954,10 @@ fun F3PlayerScreen(
     // Function to process first valid BMI reading
     fun processFirstValidReading(weight: Float, height: Float) {
         if (isFlowActive) return // Already processed
+        failedReadingWeightLock = false
+        failedReadingLowWeightStartTime = 0L
         bottomToastMessage = null
+        topWarningBannerMessage = null
         val activeFlowSessionId = flowSessionId + 1
         flowSessionId = activeFlowSessionId
         
@@ -978,13 +988,12 @@ fun F3PlayerScreen(
             return
         }
         
-        val isHeightValid = heightCalibrationEnabled && height in 50f..250f
+        val isHeightValid = heightCalibrationEnabled && height in com.example.playerapp.data.UsbSerialManager.MIN_HEIGHT_CM..com.example.playerapp.data.UsbSerialManager.MAX_HEIGHT_CM
         if (!isHeightValid) {
             if (!heightCalibrationEnabled) {
                 println("DEBUG: F3 - ⚠️ Height calibration is DISABLED. Proceeding with WEIGHT ONLY flow.")
             } else {
-                println("DEBUG: F3 - ⚠️ INVALID HEIGHT: $height cm - Out of range (must be 50-250cm)!")
-                println("DEBUG: F3 - ⚠️ Height sensor may be disconnected or data is corrupted. Proceeding with WEIGHT ONLY flow.")
+                println("DEBUG: F3 - ⚠️ INVALID/MISSING HEIGHT: $height cm (valid range: 110-220cm). Proceeding with WEIGHT ONLY flow.")
             }
         }
         
@@ -1072,21 +1081,28 @@ fun F3PlayerScreen(
             initialBmiDataMap["healthTip"] = healthTip
         }
 
-        // Show QR modal IMMEDIATELY with initial data (webUrl will be added when server responds)
-        // Set state synchronously to ensure instant display
-        if (isF2ModeActive) {
-            println("[PAYMENT_FLOW] ⚡ USB data received - F2 mode active - Proceeding directly to BMI_SHOWING")
-            bmiData = initialBmiDataMap
-            paymentFlowState = PaymentFlowState.BMI_SHOWING
-            currentBMIScreen = F1Screen.PROCESSING
-            isDetectingBMI = false
-        } else {
-            println("[PAYMENT_FLOW] ⚡ USB data received - Showing QR modal IMMEDIATELY")
-            bmiData = initialBmiDataMap
-            paymentFlowState = PaymentFlowState.QR_SHOWING
-            isDetectingBMI = false
+        // Show ProcessingScreen (DETECTING state) for 1.2s for visual feedback before transitioning to QR/BMI modal
+        bmiData = initialBmiDataMap
+        paymentFlowState = PaymentFlowState.DETECTING
+        currentBMIScreen = F1Screen.PROCESSING
+        
+        coroutineScope.launch {
+            kotlinx.coroutines.delay(1200L)
+            if (flowSessionId == activeFlowSessionId) {
+                if (isF2ModeActive) {
+                    println("[PAYMENT_FLOW] ⚡ Processing complete - F2 mode active - Proceeding to BMI_SHOWING")
+                    paymentFlowState = PaymentFlowState.BMI_SHOWING
+                    currentBMIScreen = F1Screen.BMI
+                    bmiShownTimestamp = System.currentTimeMillis()
+                } else {
+                    println("[PAYMENT_FLOW] ⚡ Processing complete - Showing QR modal")
+                    paymentFlowState = PaymentFlowState.QR_SHOWING
+                    currentBMIScreen = F1Screen.QR
+                }
+                isDetectingBMI = false
+            }
         }
-        println("[PAYMENT_FLOW] ✅ QR modal state set - Modal should be visible now")
+        println("[PAYMENT_FLOW] ✅ ProcessingScreen displayed - will transition in 1.2s")
         
         // Start timeout for QR code generation - if server doesn't respond in 60 seconds, show placeholder
         coroutineScope.launch {
@@ -2038,80 +2054,56 @@ fun F3PlayerScreen(
     
     // Setup USB Serial Manager for F3 — when F1, F2 or PlayerOnly modes are active
     LaunchedEffect(isF1ModeActive, isF2ModeActive) {
-        // Add sensor stable callback - triggers instantly when UsbSerialManager locks in a value (10 matching readings)
+        // Add sensor stable callback - triggers when UsbSerialManager locks in a stable reading (10 matching frames)
         usbSerialManager.setOnSensorStableResult { weight, heightResult ->
-            if (isDetectingBMI && !isFlowActive && weight >= 3.0f) {
+            println("DEBUG: F3 - [HEIGHT_UX] 📥 setOnSensorStableResult: weight=$weight kg | rawHeight=${heightResult.rawHeight}cm | calibrated=${heightResult.calibratedHeight}cm | isValid=${heightResult.isValid} | reason=${heightResult.reason} | isDetectingBMI=$isDetectingBMI | isFlowActive=$isFlowActive | lock=$failedReadingWeightLock")
+            if (!failedReadingWeightLock && isDetectingBMI && !isFlowActive && weight >= 3.0f) {
                 if (heightResult.isValid) {
-                    println("DEBUG: F3 - Height & Weight valid! Capturing BMI (weight=${weight}kg, height=${heightResult.calibratedHeight}cm)...")
+                    println("DEBUG: F3 - [HEIGHT_UX] ✅ Valid stable height & weight captured! (weight=${weight}kg, height=${heightResult.calibratedHeight}cm)...")
                     isRetryingHeight = false
+                    failedReadingWeightLock = false
                     topWarningBannerMessage = null
                     processFirstValidReading(weight, heightResult.calibratedHeight)
                 } else if (heightCalibrationEnabled) {
                     if (heightResult.reason == com.example.playerapp.data.HeightValidationReason.SENSOR_TIMEOUT) {
-                        println("DEBUG: F3 - Height sensor timeout (hardware issue). Resetting flow...")
+                        println("DEBUG: F3 - [HEIGHT_UX] ℹ️ Height sensor not detected (hardware timeout). Proceeding with Weight-Only flow (no height/BMI)...")
                         isRetryingHeight = false
+                        failedReadingWeightLock = false
+                        bottomToastMessage = "Height sensor not detected"
+                        topWarningBannerMessage = null
+                        processFirstValidReading(weight, 0f)
+                    } else {
+                        println("DEBUG: F3 - [HEIGHT_UX] ⚠️ Measurement quality issue (${heightResult.reason}). Showing static top warning banner...")
+                        isRetryingHeight = false
+                        failedReadingWeightLock = true
                         isDetectingBMI = false
                         paymentFlowState = PaymentFlowState.IDLE
-                        bottomToastMessage = "Height sensor not detected"
-                    } else {
-                        println("DEBUG: F3 - Measurement quality issue (${heightResult.reason}). Starting 3s retry and showing top warning banner...")
-                        isRetryingHeight = true
-                        heightRetryStartTime = System.currentTimeMillis()
-                        lockedWeightForRetry = weight
-                        lastHeightValidationReason = heightResult.reason
                         topWarningBannerMessage = "Height may not have been measured accurately. Results may vary. Please stand straight and try again."
+                        println("DEBUG: F3 - [HEIGHT_UX] 📌 Locked static banner: '$topWarningBannerMessage'")
                     }
                 } else {
-                    println("DEBUG: F3 - Height calibration disabled, processing with weight=${weight}kg")
+                    println("DEBUG: F3 - [HEIGHT_UX] ⚠️ Height calibration disabled, processing with weight=${weight}kg")
                     processFirstValidReading(weight, heightResult.calibratedHeight)
                 }
-            }
-        }
-        usbSerialManager.setOnSensorStable { weight, height ->
-            if (!isRetryingHeight && isDetectingBMI && !isFlowActive && weight >= 3.0f) {
-                if (height > 0f || !heightCalibrationEnabled) {
-                    processFirstValidReading(weight, height)
-                }
+            } else {
+                println("DEBUG: F3 - [HEIGHT_UX] ℹ️ Ignored stable result (lock=$failedReadingWeightLock, detecting=$isDetectingBMI, active=$isFlowActive, weight=$weight)")
             }
         }
 
         // Add sensor data callback - for real-time monitoring and instant feedback UI
         usbSerialManager.setOnSensorDataReceived { weight, height ->
-            // Height retry evaluation
-            if (isRetryingHeight && !isFlowActive) {
-                if (weight >= 3.0f) {
-                    val currentTime = System.currentTimeMillis()
-                    val elapsed = currentTime - heightRetryStartTime
-                    val result = usbSerialManager.validateHeight(height.toString())
-                    if (result.isValid) {
-                        println("DEBUG: F3 - Valid height acquired during 3s retry! height=${result.calibratedHeight}cm")
-                        isRetryingHeight = false
-                        topWarningBannerMessage = null
-                        processFirstValidReading(lockedWeightForRetry, result.calibratedHeight)
-                        return@setOnSensorDataReceived
-                    } else if (elapsed >= 3000L) {
-                        println("DEBUG: F3 - Height retry completed 3s window. Final reason: ${result.reason}")
-                        isRetryingHeight = false
-                        if (result.reason == com.example.playerapp.data.HeightValidationReason.SENSOR_TIMEOUT) {
-                            isDetectingBMI = false
-                            paymentFlowState = PaymentFlowState.IDLE
-                            bottomToastMessage = "Height sensor not detected"
-                        } else {
-                            isDetectingBMI = false
-                            paymentFlowState = PaymentFlowState.IDLE
-                            topWarningBannerMessage = "Height may not have been measured accurately. Results may vary. Please stand straight and try again."
-                        }
-                        return@setOnSensorDataReceived
-                    }
-                } else {
-                    println("DEBUG: F3 - User stepped off during height retry")
-                    isRetryingHeight = false
-                    isDetectingBMI = false
-                    paymentFlowState = PaymentFlowState.IDLE
-                    topWarningBannerMessage = null
+            // 1. Check if user stepped off after a failed reading lock
+            if (failedReadingWeightLock) {
+                if (weight < 0.8f) {
+                    println("DEBUG: F3 - [HEIGHT_UX] 🔓 User stepped off scale (weight=${weight}kg < 0.8kg). Clearing warning banner & releasing lock.")
+                    failedReadingWeightLock = false
+                    failedReadingLowWeightStartTime = 0L
                     bottomToastMessage = null
-                    return@setOnSensorDataReceived
+                    topWarningBannerMessage = null
+                } else {
+                    failedReadingLowWeightStartTime = 0L
                 }
+                return@setOnSensorDataReceived
             }
 
             // If the app is in PlayerOnly mode, show the toast if weight >= 3.0f
@@ -2206,7 +2198,7 @@ fun F3PlayerScreen(
                     }
                     
                     // Show loading indicator when detection starts (before modal shows)
-                    if (!isDetectingBMI && !isFlowActive && paymentFlowState == PaymentFlowState.IDLE) {
+                    if (!failedReadingWeightLock && !isDetectingBMI && !isFlowActive && paymentFlowState == PaymentFlowState.IDLE) {
                         val currentTime = System.currentTimeMillis()
                         val cooldownActive = lastFlowEndTime != null && (currentTime - lastFlowEndTime!! < 0L)
                         
@@ -2380,6 +2372,7 @@ fun F3PlayerScreen(
                 onDismiss = { showTroubleshootMenu = false },
                 onShowBMI = {
                     paymentFlowState = PaymentFlowState.BMI_SHOWING
+                    currentBMIScreen = F1Screen.BMI
                     // Inject mock data if empty
                     if (bmiData.isNullOrEmpty()) {
                         bmiData = mapOf(
@@ -2395,6 +2388,7 @@ fun F3PlayerScreen(
                 },
                 onShowFortune = {
                     paymentFlowState = PaymentFlowState.FORTUNE_SHOWING
+                    currentBMIScreen = F1Screen.FORTUNE
                     // Inject mock data if empty or missing fortune details
                     val existing = bmiData ?: emptyMap()
                     val fortuneMsg = (existing["fortuneMessage"] as? String)?.takeIf { it.isNotBlank() }
@@ -2919,11 +2913,10 @@ fun F3PlayerScreen(
                                                 println("DEBUG: F3 - Dev panel: Showing Loading screen")
                                             }
                                             F1Screen.PROCESSING -> {
-                                                // For processing screen, show BMI modal
-                                                paymentFlowState = PaymentFlowState.BMI_SHOWING
+                                                // For processing screen, show ProcessingScreen via DETECTING state
+                                                paymentFlowState = PaymentFlowState.DETECTING
                                                 currentBMIScreen = F1Screen.PROCESSING
-                                                bmiShownTimestamp = System.currentTimeMillis()
-                                                println("DEBUG: F3 - Dev panel: Showing Processing screen")
+                                                println("DEBUG: F3 - Dev panel: Showing ProcessingScreen")
                                             }
                                             else -> {}
                                         }
@@ -3203,26 +3196,21 @@ fun F3PlayerScreen(
     }
     
     // Top Warning Banner Overlay (zIndex = 20000f, overlays all dialogs and screens)
-    LaunchedEffect(topWarningBannerMessage) {
-        if (topWarningBannerMessage != null) {
-            kotlinx.coroutines.delay(4000L) // Auto dismiss after 4 seconds
-            topWarningBannerMessage = null
-        }
+    SideEffect {
+        println("DEBUG: F3 - [HEIGHT_UX] 🎨 TopWarningBanner render check: visible=${topWarningBannerMessage != null}, text='$topWarningBannerMessage', lock=$failedReadingWeightLock")
     }
 
-    androidx.compose.animation.AnimatedVisibility(
-        visible = topWarningBannerMessage != null,
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .zIndex(20000f),
-        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically(initialOffsetY = { -it }),
-        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically(targetOffsetY = { -it })
+        contentAlignment = Alignment.TopCenter
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 16.dp, start = 16.dp, end = 16.dp),
-            contentAlignment = Alignment.TopCenter
+        androidx.compose.animation.AnimatedVisibility(
+            visible = topWarningBannerMessage != null,
+            modifier = Modifier.padding(top = 16.dp, start = 16.dp, end = 16.dp),
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically(initialOffsetY = { -it }),
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically(targetOffsetY = { -it })
         ) {
             Surface(
                 shape = RoundedCornerShape(16.dp),

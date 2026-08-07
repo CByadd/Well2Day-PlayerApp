@@ -160,46 +160,63 @@ fun BMIScreenNew(bmiData: Map<String, Any>?) {
             )
         }
 
-            // Top Row: Weight & Height
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-            Box(modifier = Modifier.weight(1f)) {
-                MeasurementCard(
-                    label = "Weight",
-                    value = if (weight != null) String.format("%.1f", animatedWeight) else "--",
-                    unit = "kg",
-                    pillColor = Color(0xFF2563EB)
-                )
+            // Top Row: Weight (and Height if valid)
+            if (isHeightValid) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        MeasurementCard(
+                            label = "Weight",
+                            value = if (weight != null) String.format("%.1f", animatedWeight) else "--",
+                            unit = "kg",
+                            pillColor = Color(0xFF2563EB)
+                        )
+                    }
+                    Box(modifier = Modifier.weight(1f)) {
+                        MeasurementCard(
+                            label = "Height",
+                            value = if (height != null) String.format("%.0f", animatedHeight) else "--",
+                            unit = "cm",
+                            pillColor = Color(0xFF2563EB)
+                        )
+                    }
+                }
+            } else {
+                // Weight Only mode — hide Height card completely
+                Box(
+                    modifier = Modifier.fillMaxWidth(0.6f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    MeasurementCard(
+                        label = "Weight",
+                        value = if (weight != null) String.format("%.1f", animatedWeight) else "--",
+                        unit = "kg",
+                        pillColor = Color(0xFF2563EB)
+                    )
+                }
             }
-            Box(modifier = Modifier.weight(1f)) {
-                MeasurementCard(
-                    label = "Height",
-                    value = if (height != null) String.format("%.0f", animatedHeight) else "--",
-                    unit = "cm",
-                    pillColor = Color(0xFF2563EB)
-                )
-            }
-        }
 
-        // Main BMI Card
+        // Main BMI Card (Hidden when height is invalid)
         if (isHeightValid && bmi != null) {
             BMIGradientCard(bmi = animatedBmi.toDouble(), category = category)
         }
 
-            // Middle Row: Water & Ideal Range
+            // Middle Row: Water (and Ideal Range if height is valid)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-            Box(modifier = Modifier.weight(1f)) {
-                WaterIntakeCard(waterRecommendation)
+                Box(modifier = Modifier.weight(1f)) {
+                    WaterIntakeCard(waterRecommendation)
+                }
+                if (isHeightValid) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        IdealRangeCard(idealWeightRange, height?.let { String.format("%.0f", it.toFloat()) })
+                    }
+                }
             }
-            Box(modifier = Modifier.weight(1f)) {
-                IdealRangeCard(idealWeightRange, height?.let { String.format("%.0f", it.toFloat()) })
-            }
-        }
 
         // Bottom Wellness Tip Card
         var healthTips by remember { mutableStateOf<List<String>?>(null) }

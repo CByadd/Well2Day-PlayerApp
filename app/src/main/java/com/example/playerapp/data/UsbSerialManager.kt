@@ -111,7 +111,7 @@ class UsbSerialManager(private val context: Context) {
          * Number of consecutive identical-weight frames required before
          * [onSensorStable] is fired.
          */
-        private const val STABLE_THRESHOLD = 10
+        private const val STABLE_THRESHOLD = 5
 
         /** Height readings are collected during frames [HEIGHT_COLLECT_START]+1 to [STABLE_THRESHOLD]. */
         private const val HEIGHT_COLLECT_START = 0
@@ -119,9 +119,9 @@ class UsbSerialManager(private val context: Context) {
         /** Weights at or below this value are treated as "nobody on scale". */
         private const val ZERO_WEIGHT_THRESHOLD = 0.5f
 
-        /** Valid height range in cm — supports children (80 cm) to tall adults (250 cm). */
-        const val MIN_HEIGHT_CM = 80f
-        const val MAX_HEIGHT_CM = 250f
+        /** Valid height range in cm (110 cm to 220 cm). Readings outside this range trigger warning banner. */
+        const val MIN_HEIGHT_CM = 110f
+        const val MAX_HEIGHT_CM = 220f
         const val MAX_HEIGHT_VARIANCE_CM = 5.0f
 
         private val NUMBER_PATTERN = Regex("[-+]?\\d+(?:[.,]\\d+)?")
@@ -961,12 +961,11 @@ class UsbSerialManager(private val context: Context) {
             if (preViewsVal != "-1") {
                 Log.d(TAG, "↩ Zero-weight — resetting reference state")
                 resetAlgorithmState()
-                Log.d(TAG, "Calling onSensorDataReceived()")
-                onSensorDataReceived?.invoke(0f, 0f)
                 Log.d(TAG, "Calling onSensorStable()")
                 onSensorStable?.invoke(0f, 0f)  // Let callers know scale is empty
             }
             preViewsVal = "-1"
+            onSensorDataReceived?.invoke(0f, 0f)
             return
         }
 
