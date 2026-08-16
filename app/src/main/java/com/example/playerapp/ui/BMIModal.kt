@@ -461,7 +461,8 @@ fun BMIModal(
 fun QRCodeScreen(
     bmiData: Map<String, Any>?,
     isSaveCloudOnly: Boolean = false,
-    isCompact: Boolean = false
+    isCompact: Boolean = false,
+    isPaymentProcessing: Boolean = false
 ) {
     val steps = remember(isSaveCloudOnly) {
         if (isSaveCloudOnly) {
@@ -492,10 +493,16 @@ fun QRCodeScreen(
         return
     }
 
-    val qrBitmap: Bitmap? = remember(webUrl) {
-        webUrl?.let { url ->
+    // Drawing ~1500-2500 individually anti-aliased rounded rects per QR code is
+    // real work — done inline via remember{} it ran on the main/composition
+    // thread and caused a brief freeze right as the QR screen appeared (i.e.
+    // exactly when a flow transitions). Moved off-thread so it can't drop frames.
+    val qrBitmap: Bitmap? by produceState<Bitmap?>(initialValue = null, webUrl) {
+        value = webUrl?.let { url ->
             try {
-                generateQrBitmap(url, 210, 210)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    generateQrBitmap(url, 480, 480)
+                }
             } catch (e: Exception) {
                 null
             }
@@ -559,8 +566,40 @@ fun QRCodeScreen(
 
         Spacer(modifier = Modifier.height(if (isCompact) 8.dp else 16.dp))
 
+        AnimatedVisibility(
+            visible = isPaymentProcessing,
+            enter = fadeIn(tween(200)) + expandVertically(tween(200)),
+            exit = fadeOut(tween(150)) + shrinkVertically(tween(150))
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .padding(bottom = 10.dp)
+                    .background(Color(0xFFECFDF5), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = Color(0xFF059669)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Payment processing…",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF059669)
+                )
+            }
+        }
+
         Text(
-            text = if (isSaveCloudOnly) "Save to Cloud" else "Scan To Continue",
+            text = when {
+                isPaymentProcessing -> "Almost there!"
+                isSaveCloudOnly -> "Save to Cloud"
+                else -> "Scan To Continue"
+            },
             fontSize = if (isCompact) 18.sp else 22.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF1F2937),
@@ -570,7 +609,11 @@ fun QRCodeScreen(
         Spacer(modifier = Modifier.height(if (isCompact) 4.dp else 6.dp))
 
         Text(
-            text = if (isSaveCloudOnly) "Scan the QR code to save your results to the cloud" else "Secure payment and instant access to your Well2Day results",
+            text = when {
+                isPaymentProcessing -> "Please complete the payment on your phone. This will finish automatically — no need to scan again."
+                isSaveCloudOnly -> "Scan the QR code to save your results to the cloud"
+                else -> "Secure payment and instant access to your Well2Day results"
+            },
             fontSize = if (isCompact) 12.sp else 14.sp,
             color = Color(0xFF6B7280),
             textAlign = TextAlign.Center,
@@ -932,125 +975,42 @@ fun FortuneScreen(bmiData: Map<String, Any>?) {
     }
 }
 
-// Optimized: QR code generation with error handling
+/**
+ * Generates a crisp, spec-compliant QR bitmap.
+ *
+ * Previously this hand-drew rounded dots with per-module gaps and custom
+ * finder-pattern arithmetic on a Canvas — every soft/anti-aliased edge
+ * compounded across hundreds of modules into visible blur, and no amount of
+ * extra resolution fixed it because the fuzziness was baked into each module,
+ * not a scaling artifact. Letting ZXing's own encode(width, height) overload
+ * scale the matrix guarantees an integer pixel-per-module size — every module
+ * lands on exact pixel boundaries with no anti-aliasing between them.
+ */
 fun generateQrBitmap(text: String, width: Int, height: Int): Bitmap? {
     return try {
         val hints = hashMapOf<EncodeHintType, Any>().apply {
-            put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.H)
+            // H (30% redundancy) is for codes that get physically damaged/dirty —
+            // a printed sticker, not a clean screen. M (15%) is standard for
+            // screen-displayed codes and keeps the module count (and thus each
+            // module's pixel size) as large as possible for this URL's length.
+            put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M)
             put(EncodeHintType.CHARACTER_SET, "UTF-8")
-            put(EncodeHintType.MARGIN, 0)
+            put(EncodeHintType.MARGIN, 4) // Standard 4-module quiet zone
         }
-        
-        val writer = QRCodeWriter()
-        val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, 0, 0, hints)
-        
-        val matrixWidth = bitMatrix.width
-        val matrixHeight = bitMatrix.height
-        
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bitmap)
-        
-        // Background color
-        canvas.drawColor(android.graphics.Color.WHITE)
-        
-        // Paint settings for Slate 900 color
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.parseColor("#0F172A")
-            style = android.graphics.Paint.Style.FILL
-        }
-        
-        // Padding: we want at least 1 module of spacing around the QR code.
-        // So the virtual grid has matrixWidth + 2 modules.
-        val paddingModules = 1f
-        val virtualWidth = matrixWidth + 2 * paddingModules
-        val virtualHeight = matrixHeight + 2 * paddingModules
-        
-        val moduleWidth = width.toFloat() / virtualWidth
-        val moduleHeight = height.toFloat() / virtualHeight
-        
-        val offsetX = paddingModules * moduleWidth
-        val offsetY = paddingModules * moduleHeight
-        
-        // Helper to check if coordinates fall within Finder patterns or their separators
-        fun isFinderPattern(x: Int, y: Int): Boolean {
-            if (x in 0..7 && y in 0..7) return true // Top-left (7 finder + 1 separator)
-            if (x in (matrixWidth - 8) until matrixWidth && y in 0..7) return true // Top-right
-            if (x in 0..7 && y in (matrixHeight - 8) until matrixHeight) return true // Bottom-left
-            return false
-        }
-        
-        // 1. Draw regular modules as smooth rounded dots
-        for (x in 0 until matrixWidth) {
-            for (y in 0 until matrixHeight) {
-                if (bitMatrix[x, y] && !isFinderPattern(x, y)) {
-                    val left = offsetX + x * moduleWidth
-                    val top = offsetY + y * moduleHeight
-                    val right = offsetX + (x + 1) * moduleWidth
-                    val bottom = offsetY + (y + 1) * moduleHeight
-                    
-                    val gapX = moduleWidth * 0.05f
-                    val gapY = moduleHeight * 0.05f
-                    
-                    val rect = android.graphics.RectF(
-                        left + gapX,
-                        top + gapY,
-                        right - gapX,
-                        bottom - gapY
-                    )
-                    val rx = moduleWidth * 0.4f
-                    val ry = moduleHeight * 0.4f
-                    canvas.drawRoundRect(rect, rx, ry, paint)
-                }
+
+        val bitMatrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, width, height, hints)
+        val bmWidth = bitMatrix.width
+        val bmHeight = bitMatrix.height
+        val pixels = IntArray(bmWidth * bmHeight)
+        for (y in 0 until bmHeight) {
+            val rowOffset = y * bmWidth
+            for (x in 0 until bmWidth) {
+                pixels[rowOffset + x] = if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
             }
         }
-        
-        // 2. Draw three Finder Patterns manually with rounded nested boxes
-        val finderSize = 7
-        val finderCoordinates = listOf(
-            Pair(0, 0),
-            Pair(matrixWidth - 7, 0),
-            Pair(0, matrixHeight - 7)
-        )
-        
-        for (coord in finderCoordinates) {
-            val fx = coord.first
-            val fy = coord.second
-            
-            val left = offsetX + fx * moduleWidth
-            val top = offsetY + fy * moduleHeight
-            val right = offsetX + (fx + finderSize) * moduleWidth
-            val bottom = offsetY + (fy + finderSize) * moduleHeight
-            
-            // Outer black rounded square
-            paint.color = android.graphics.Color.parseColor("#0F172A")
-            val outerRect = android.graphics.RectF(left, top, right, bottom)
-            val outerRadius = moduleWidth * 1.8f
-            canvas.drawRoundRect(outerRect, outerRadius, outerRadius, paint)
-            
-            // Middle white rounded square
-            paint.color = android.graphics.Color.WHITE
-            val innerRect1 = android.graphics.RectF(
-                left + moduleWidth,
-                top + moduleHeight,
-                right - moduleWidth,
-                bottom - moduleHeight
-            )
-            val middleRadius = moduleWidth * 1.2f
-            canvas.drawRoundRect(innerRect1, middleRadius, middleRadius, paint)
-            
-            // Inner black rounded square
-            paint.color = android.graphics.Color.parseColor("#0F172A")
-            val innerRect2 = android.graphics.RectF(
-                left + moduleWidth * 2f,
-                top + moduleHeight * 2f,
-                right - moduleWidth * 2f,
-                bottom - moduleHeight * 2f
-            )
-            val innerRadius = moduleWidth * 0.8f
-            canvas.drawRoundRect(innerRect2, innerRadius, innerRadius, paint)
+        Bitmap.createBitmap(bmWidth, bmHeight, Bitmap.Config.ARGB_8888).apply {
+            setPixels(pixels, 0, bmWidth, 0, 0, bmWidth, bmHeight)
         }
-        
-        bitmap
     } catch (e: Exception) {
         null
     }

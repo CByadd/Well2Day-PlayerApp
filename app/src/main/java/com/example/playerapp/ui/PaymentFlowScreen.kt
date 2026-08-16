@@ -1,5 +1,7 @@
 package com.example.playerapp.ui
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -50,6 +52,7 @@ fun PaymentFlowScreen(
     flowType: String,
     drawerOffset: Int = 0,
     forcedScreen: F1Screen? = null,
+    isPaymentProcessingLive: Boolean = false,
     onDismiss: () -> Unit = {},
     allowDismissOnOverlay: Boolean = false,
     onProcessingComplete: () -> Unit = {}
@@ -83,8 +86,14 @@ fun PaymentFlowScreen(
     }
 
     // ── Rendering ─────────────────────────────────────────────────────────────
-    key(stateKey) {
-        when (paymentFlowState) {
+    // Crossfade instead of a hard cut between weigh-in → QR → results screens.
+    Crossfade(
+        targetState = paymentFlowState,
+        animationSpec = tween(220),
+        label = "paymentFlowScreen"
+    ) { crossfadeState ->
+      key(crossfadeState.name) {
+        when (crossfadeState) {
 
             PaymentFlowState.QR_SHOWING -> {
                 if (currentBmiData != null) {
@@ -94,7 +103,8 @@ fun PaymentFlowScreen(
                         bmiData = currentBmiData,
                         onDismiss = onDismiss,
                         drawerOffset = drawerOffset,
-                        allowDismissOnOverlay = allowDismissOnOverlay
+                        allowDismissOnOverlay = allowDismissOnOverlay,
+                        isPaymentProcessing = isPaymentProcessingLive
                     )
                 } else {
                     println("[PAYMENT_FLOW_SCREEN] ⚠️ QR_SHOWING but bmiData is null — not rendering")
@@ -165,6 +175,7 @@ fun PaymentFlowScreen(
                 println("[PAYMENT_FLOW_SCREEN] 🎨 State is IDLE — no modal")
             }
         }
+      }
     }
 }
 

@@ -37,6 +37,8 @@ class SocketManager(private val context: Context) {
     
     // Callbacks
     private var onPaymentSuccess: ((Map<String, Any>) -> Unit)? = null
+    /** Fired the instant the customer's phone creates the Razorpay order — i.e. they're actively paying. */
+    private var onPaymentProcessing: (() -> Unit)? = null
     private var onFortuneReady: ((Map<String, Any>) -> Unit)? = null
     private var onAssetsUpdated: ((String) -> Unit)? = null
     /** Fired when the admin panel pushes a new appMode ("F1", "F2", "PlayerOnly", …) */
@@ -229,6 +231,18 @@ class SocketManager(private val context: Context) {
             println("[SOCKET] ✅ 'payment-success' event listener registered")
             println("[SOCKET] ✅ Listener is active and waiting for events")
             
+            // Listen for payment processing event (order created, customer is on the Razorpay checkout)
+            socket?.on("payment-processing") { args ->
+                try {
+                    println("[SOCKET] 🔔 'payment-processing' event received: ${args.joinToString(", ")}")
+                    Handler(Looper.getMainLooper()).post {
+                        onPaymentProcessing?.invoke()
+                    }
+                } catch (e: Exception) {
+                    println("[SOCKET] ❌ Error processing payment-processing event: ${e.message}")
+                }
+            }
+
             // Listen for room join confirmation
             socket?.on("room-joined") { args ->
                 try {
@@ -460,6 +474,13 @@ class SocketManager(private val context: Context) {
         println("[SOCKET] 📝 setOnPaymentSuccess called - registering callback")
         this.onPaymentSuccess = callback
         println("[SOCKET] ✅ Payment success callback registered: ${this.onPaymentSuccess != null}")
+    }
+
+    /**
+     * Set callback for when the customer starts paying (Razorpay order created on their phone).
+     */
+    fun setOnPaymentProcessing(callback: () -> Unit) {
+        this.onPaymentProcessing = callback
     }
     
     /**

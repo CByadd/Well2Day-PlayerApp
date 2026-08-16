@@ -10,6 +10,8 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.hoho.android.usbserial.driver.CdcAcmSerialDriver
 import com.hoho.android.usbserial.driver.Ch34xSerialDriver
@@ -87,7 +89,7 @@ data class HeightValidationResult(
  *
  *  Stability algorithm (mirrors SerialConsoleActivity.updateReceivedData):
  *   1. Parse weight string and height string from each line.
- *   2. If weight equals [preViewsVal] → increment counter.
+ *   2. If weight is within [WEIGHT_TOLERANCE_KG] of [preViewsVal] → increment counter.
  *      a. Collect raw heights during readings 6–10 into [repetedHeight].
  *      b. When counter > [STABLE_THRESHOLD] fire [onSensorStable] (once).
  *   3. If weight changed → reset counter and [repetedHeight].
@@ -106,6 +108,7 @@ class UsbSerialManager(private val context: Context) {
         private const val TRUSTED_DEVICE_PREFIX = "trusted_device:"
         private const val USB_REFRESH_INTERVAL_SECONDS = 3L
         private const val USB_RECOVERY_DELAY_SECONDS = 1L
+        private const val PERMISSION_REQUEST_TIMEOUT_MS = 20_000L
 
         /**
          * Number of consecutive identical-weight frames required before
@@ -113,16 +116,40 @@ class UsbSerialManager(private val context: Context) {
          */
         private const val STABLE_THRESHOLD = 5
 
+        /**
+         * Real load cells never repeat the exact same value twice — the old code
+         * compared weight as an exact string match, so anyone whose reading
+         * jittered by so much as 0.1kg between frames reset the counter forever
+         * and never reached STABLE_THRESHOLD (surfacing as "height not detected").
+         * Consecutive frames within this tolerance now count as the same reading.
+         */
+        private const val WEIGHT_TOLERANCE_KG = 0.3f
+
         /** Height readings are collected during frames [HEIGHT_COLLECT_START]+1 to [STABLE_THRESHOLD]. */
         private const val HEIGHT_COLLECT_START = 0
 
         /** Weights at or below this value are treated as "nobody on scale". */
         private const val ZERO_WEIGHT_THRESHOLD = 0.5f
 
-        /** Valid height range in cm (110 cm to 220 cm). Readings outside this range trigger warning banner. */
-        const val MIN_HEIGHT_CM = 110f
+        /**
+         * Valid height range in cm. Readings outside this range trigger the warning
+         * banner. Was 110cm floor, which rejected any child under ~3'7" (a huge slice
+         * of a public kiosk's real users) as OUT_OF_RANGE — lowered to fit a toddler
+         * who can stand unassisted on the scale.
+         */
+        const val MIN_HEIGHT_CM = 70f
         const val MAX_HEIGHT_CM = 220f
+        /**
+         * Per-sample agreement tolerance (cm) against the already mode/median-chosen
+         * height — not a raw min-max spread. A field log showed samples like
+         * [183, 210, 183, 183, 183]: a single-frame echo spike (210) must not veto
+         * a clear 4-of-5 majority at 183. ponytail: fixed tolerance, not
+         * distance-adaptive; widen if a genuinely-stable reading still gets rejected.
+         */
         const val MAX_HEIGHT_VARIANCE_CM = 5.0f
+
+        /** Must match this many of the collected samples to count as stable (mirrors findDuplicateValue's own freq>=2 bar). */
+        const val MIN_AGREEING_HEIGHT_SAMPLES = 2
 
         private val NUMBER_PATTERN = Regex("[-+]?\\d+(?:[.,]\\d+)?")
         private val WEIGHT_FIELD_PATTERN = Regex(
@@ -181,7 +208,14 @@ class UsbSerialManager(private val context: Context) {
 
     private var usbManager: UsbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private val usbAccessPreferences = context.getSharedPreferences(USB_ACCESS_PREFS, Context.MODE_PRIVATE)
-    private val permissionRequestsInFlight = mutableSetOf<String>()
+    /**
+     * Maps device key → request timestamp. A kiosk has no one to tap the OS consent
+     * dialog, so if the GRANTED/DENIED broadcast is ever dropped (dialog swallowed by
+     * an OEM overlay, screen state change, etc.) the request must not block that
+     * device's USB access forever — [PERMISSION_REQUEST_TIMEOUT_MS] lets the watchdog
+     * retry it instead of requiring an operator to reboot the box.
+     */
+    private val permissionRequestsInFlight = mutableMapOf<String, Long>()
     private val deniedPermissionKeys = mutableSetOf<String>()
     private val connectionLock = Any()
     @Volatile private var isCleanedUp = false
@@ -193,6 +227,20 @@ class UsbSerialManager(private val context: Context) {
     }
     private val refreshExecutor = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "usb-device-watchdog").apply { isDaemon = true }
+    }
+
+    /**
+     * All onSensorX/onLogMessage callbacks run on the usb-serial-io background
+     * thread. Callers write Compose state directly from them with no thread
+     * marshaling of their own — harmless while those callbacks rarely fired, but
+     * once the stability-detection fixes made them fire reliably (multiple times
+     * per second while someone's on the scale), that raced against the main
+     * thread's recomposition and crashed with "Unsupported concurrent change
+     * during composition". Posting to main here fixes it for every caller at once.
+     */
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private fun postToMain(block: () -> Unit) {
+        mainHandler.post(block)
     }
 
     /** Accumulates bytes until a full newline-terminated line is received. */
@@ -311,8 +359,8 @@ class UsbSerialManager(private val context: Context) {
 
     // ── Reference-algorithm state ─────────────────────────────────────────────
 
-    /** Last weight string seen ("-1" sentinel when weight was 0). */
-    @Volatile private var preViewsVal: String = ""
+    /** Last weight seen (null sentinel when weight was 0 / nobody on scale). */
+    @Volatile private var preViewsVal: Float? = null
 
     /**
      * Count of consecutive frames with the same weight value.
@@ -544,7 +592,17 @@ class UsbSerialManager(private val context: Context) {
 
         val key = deviceKey(device)
         if (key in deniedPermissionKeys) return false
-        if (permissionRequestsInFlight.add(key)) {
+
+        // A stale in-flight request (broadcast never arrived — no one to tap the
+        // dialog on an unattended kiosk) must not block this device forever.
+        val requestedAt = permissionRequestsInFlight[key]
+        if (requestedAt != null && System.currentTimeMillis() - requestedAt > PERMISSION_REQUEST_TIMEOUT_MS) {
+            Log.w(TAG, "Permission request for $key timed out after ${PERMISSION_REQUEST_TIMEOUT_MS}ms — retrying")
+            permissionRequestsInFlight.remove(key)
+        }
+
+        if (key !in permissionRequestsInFlight) {
+            permissionRequestsInFlight[key] = System.currentTimeMillis()
             val requestCode = key.hashCode()
             val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
@@ -958,23 +1016,25 @@ class UsbSerialManager(private val context: Context) {
 
         // ── Zero-weight: reset state and broadcast (0, 0) ─────────────────────
         if (weightRaw <= ZERO_WEIGHT_THRESHOLD) {
-            if (preViewsVal != "-1") {
+            if (preViewsVal != null) {
                 Log.d(TAG, "↩ Zero-weight — resetting reference state")
                 resetAlgorithmState()
                 Log.d(TAG, "Calling onSensorStable()")
-                onSensorStable?.invoke(0f, 0f)  // Let callers know scale is empty
+                postToMain { onSensorStable?.invoke(0f, 0f) }  // Let callers know scale is empty
             }
-            preViewsVal = "-1"
-            onSensorDataReceived?.invoke(0f, 0f)
+            preViewsVal = null
+            postToMain { onSensorDataReceived?.invoke(0f, 0f) }
             return
         }
 
         // ── Valid weight: always fire raw callback ─────────────────────────────
         Log.d(TAG, "Calling onSensorDataReceived()")
-        onSensorDataReceived?.invoke(weightRaw, rawHeight)
+        postToMain { onSensorDataReceived?.invoke(weightRaw, rawHeight) }
 
         // ── Reference stability tracking ───────────────────────────────────────
-        if (preViewsVal == weightStr) {
+        // Tolerance-based, not exact-match: real load cells jitter frame-to-frame,
+        // so treat consecutive readings within WEIGHT_TOLERANCE_KG as "the same".
+        if (preViewsVal != null && kotlin.math.abs(weightRaw - preViewsVal!!) <= WEIGHT_TOLERANCE_KG) {
             increment++
             Log.d(TAG, "📊 Increment: $increment  weight=$weightStr  height=$heightStr")
 
@@ -1002,7 +1062,7 @@ class UsbSerialManager(private val context: Context) {
             // Note: do NOT reset stableFired here; that resets only on zero-weight
         }
 
-        preViewsVal = weightStr
+        preViewsVal = weightRaw
     }
 
     private data class ParsedSensorReading(val weight: Float, val height: Float?)
@@ -1090,9 +1150,16 @@ class UsbSerialManager(private val context: Context) {
         if (heightSamples.size >= 2) {
             val floatSamples = heightSamples.mapNotNull { it.toFloatOrNull() }
             if (floatSamples.size >= 2) {
-                val minS = floatSamples.minOrNull() ?: 0f
-                val maxS = floatSamples.maxOrNull() ?: 0f
-                if ((maxS - minS) > MAX_HEIGHT_VARIANCE_CM) {
+                // Checking raw min-max spread double-punished readings that
+                // findDuplicateValue() had already resolved correctly: real field
+                // logs showed a stable 52kg weight with height samples like
+                // [183, 210, 183, 183, 183] — one single-frame echo spike (210) made
+                // the spread look wild even though 183 was the clear, repeated,
+                // correct value. Check agreement with the value actually CHOSEN
+                // (rawHeightStr, already mode/median-picked) instead of raw spread,
+                // so one outlier frame can no longer veto an otherwise clear majority.
+                val agreeing = floatSamples.count { kotlin.math.abs(it - rawHeight) <= MAX_HEIGHT_VARIANCE_CM }
+                if (agreeing < MIN_AGREEING_HEIGHT_SAMPLES) {
                     return HeightValidationResult(
                         rawHeight = rawHeight,
                         calibratedHeight = calibrated,
@@ -1134,8 +1201,10 @@ class UsbSerialManager(private val context: Context) {
             "✅ STABLE LOCKED — Weight: $weightKg kg | " +
             "rawHeight: ${heightResult.rawHeight} → calibrated: ${heightResult.calibratedHeight} → valid: ${heightResult.isValid} (${heightResult.reason})"
         )
-        onSensorStableResult?.invoke(weightKg, heightResult)
-        onSensorStable?.invoke(weightKg, heightResult.calibratedHeight)
+        postToMain {
+            onSensorStableResult?.invoke(weightKg, heightResult)
+            onSensorStable?.invoke(weightKg, heightResult.calibratedHeight)
+        }
     }
 
     /** Reset only the algorithm state. Called on zero-weight. */
@@ -1143,7 +1212,7 @@ class UsbSerialManager(private val context: Context) {
         increment = 0
         repetedHeight.clear()
         stableFired = false
-        // preViewsVal is set to "-1" by the caller (sentinel for zero-weight)
+        // preViewsVal is set to null by the caller (sentinel for zero-weight)
     }
 
     // ── BMI helpers (unchanged API surface) ──────────────────────────────────
@@ -1179,11 +1248,13 @@ class UsbSerialManager(private val context: Context) {
             usbConnection = null
             dataBuffer.setLength(0)
             resetAlgorithmState()
-            preViewsVal = ""
+            preViewsVal = null
             _usbStatusFlow.update { it.copy(connectedArduinosCount = 0) }
             if (notifyDisconnected) {
-                onSensorDataReceived?.invoke(0f, 0f)
-                onSensorStable?.invoke(0f, 0f)
+                postToMain {
+                    onSensorDataReceived?.invoke(0f, 0f)
+                    onSensorStable?.invoke(0f, 0f)
+                }
             }
         }
     }

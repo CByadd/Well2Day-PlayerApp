@@ -32,7 +32,8 @@ fun QRModal(
     bmiData: Map<String, Any>?,
     onDismiss: () -> Unit = {},
     drawerOffset: Int = 0,
-    allowDismissOnOverlay: Boolean = false
+    allowDismissOnOverlay: Boolean = false,
+    isPaymentProcessing: Boolean = false
 ) {
     if (!isVisible || bmiData == null) return
 
@@ -130,7 +131,7 @@ fun QRModal(
                                         .padding(top = if (allowDismissOnOverlay) 8.dp else 0.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    QRCodeScreen(bmiData)
+                                    QRCodeScreen(bmiData, isPaymentProcessing = isPaymentProcessing)
                                 }
                             }
                         }

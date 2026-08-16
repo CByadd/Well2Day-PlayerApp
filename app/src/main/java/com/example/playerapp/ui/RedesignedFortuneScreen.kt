@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,11 +58,15 @@ fun RedesignedFortuneScreen(
         bmiData?.get("webUrl") as? String
     }
 
-    val qrRes = if (isCompact) 120 else 160
-    val qrBitmap: Bitmap? = remember(webUrl, qrRes) {
-        webUrl?.let { url ->
+    val qrRes = if (isCompact) 320 else 400
+    // Off the main thread — the per-module canvas drawing is real work and this
+    // screen appears mid-flow, so blocking composition here reads as a freeze.
+    val qrBitmap: Bitmap? by produceState<Bitmap?>(initialValue = null, webUrl, qrRes) {
+        value = webUrl?.let { url ->
             try {
-                generateQrBitmap(url, qrRes, qrRes)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    generateQrBitmap(url, qrRes, qrRes)
+                }
             } catch (e: Exception) {
                 null
             }
@@ -299,7 +304,8 @@ fun RedesignedFortuneScreen(
             Spacer(modifier = Modifier.height(if (isCompact) 16.dp else 24.dp))
 
             // Save to Cloud Card (Hidden for F1)
-            if (flowType != "F1" && qrBitmap != null) {
+            val qrBitmapSnapshot = qrBitmap
+            if (flowType != "F1" && qrBitmapSnapshot != null) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(24.dp),
@@ -360,7 +366,7 @@ fun RedesignedFortuneScreen(
                             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                         ) {
                             Image(
-                                bitmap = qrBitmap.asImageBitmap(),
+                                bitmap = qrBitmapSnapshot.asImageBitmap(),
                                 contentDescription = "QR Code",
                                 modifier = Modifier
                                     .size(qrBoxSize)

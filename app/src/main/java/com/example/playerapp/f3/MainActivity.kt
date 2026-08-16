@@ -34,6 +34,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -575,7 +576,12 @@ fun F3PlayerScreen(
     // Single source of truth for payment flow state
     // PaymentFlowState is defined in ui.PaymentFlowScreen.kt
     var paymentFlowState by remember { mutableStateOf(PaymentFlowState.IDLE) }
-    
+
+    // True from the moment the customer's phone creates the Razorpay order
+    // ('payment-processing' socket event) until payment-success/reset — drives
+    // the "Payment processing…" indicator on the QR screen.
+    var isPaymentProcessingLive by remember { mutableStateOf(false) }
+
     // Track timing for transitions
     var bmiShownTimestamp by remember { mutableStateOf<Long?>(null) }
     var fortuneShownTimestamp by remember { mutableStateOf<Long?>(null) }
@@ -934,6 +940,7 @@ fun F3PlayerScreen(
         }
         isFlowActive = false
         paymentFlowState = PaymentFlowState.IDLE
+        isPaymentProcessingLive = false
         bmiData = null
         capturedWeight = null
         capturedHeight = null
@@ -1230,6 +1237,7 @@ fun F3PlayerScreen(
                                                 
                                                 bmiData = updatedBmiData.toMap()
                                                 paymentFlowState = PaymentFlowState.BMI_SHOWING
+                                                isPaymentProcessingLive = false
                                                 currentBMIScreen = F1Screen.PROCESSING
                                                 
                                                 // Fetch fortune immediately
@@ -1668,6 +1676,7 @@ fun F3PlayerScreen(
             
             // Force state update with explicit assignment
             paymentFlowState = PaymentFlowState.BMI_SHOWING
+            isPaymentProcessingLive = false
             currentBMIScreen = F1Screen.PROCESSING
             assetRefreshTrigger++
             
@@ -1778,6 +1787,17 @@ fun F3PlayerScreen(
         }
     }
     
+    // Live "payment processing" indicator — fires when the customer's phone creates
+    // the Razorpay order (i.e. they've tapped Pay Now and are on the checkout screen).
+    LaunchedEffect(Unit) {
+        socketManager.setOnPaymentProcessing {
+            if (paymentFlowState == PaymentFlowState.QR_SHOWING) {
+                println("[PAYMENT_FLOW] 💳 Customer started paying — showing live processing indicator")
+                isPaymentProcessingLive = true
+            }
+        }
+    }
+
     // Fortune and Asset Refresh ready handlers
     LaunchedEffect(Unit) {
         socketManager.setOnFortuneReady { fortuneData ->
@@ -2072,6 +2092,16 @@ fun F3PlayerScreen(
                         bottomToastMessage = "Height sensor not detected"
                         topWarningBannerMessage = null
                         processFirstValidReading(weight, 0f)
+                    } else if (heightResult.reason == com.example.playerapp.data.HeightValidationReason.OUT_OF_RANGE) {
+                        // Genuinely outside the configured range (e.g. a very young child)
+                        // — telling them to "stand straight and try again" is false hope,
+                        // no retry fixes this. Fall back to weight-only, same as a sensor timeout.
+                        println("DEBUG: F3 - [HEIGHT_UX] ℹ️ Height out of measurable range (${heightResult.calibratedHeight}cm). Proceeding with Weight-Only flow (no height/BMI)...")
+                        isRetryingHeight = false
+                        failedReadingWeightLock = false
+                        bottomToastMessage = "Height out of measurable range"
+                        topWarningBannerMessage = null
+                        processFirstValidReading(weight, 0f)
                     } else {
                         println("DEBUG: F3 - [HEIGHT_UX] ⚠️ Measurement quality issue (${heightResult.reason}). Showing static top warning banner...")
                         isRetryingHeight = false
@@ -2314,8 +2344,8 @@ fun F3PlayerScreen(
         .fillMaxSize()
         .padding(if (hideAppMargin) 0.dp else 10.dp)) {
         PlayerScreen(
-            screenId = screenId, 
-            enableBMIFunctionality = false, 
+            screenId = screenId,
+            enableBMIFunctionality = false,
             refreshTrigger = assetRefreshTrigger,
             hideScreenId = hideScreenId
         )
@@ -3130,6 +3160,7 @@ fun F3PlayerScreen(
             flowType = effectiveFlowType,
             drawerOffset = drawerOffsetDp,
             forcedScreen = forcedScreen,
+            isPaymentProcessingLive = isPaymentProcessingLive,
             onDismiss = {
                 println("[PAYMENT_FLOW] Modal dismissed - resetting flow")
                 resetPaymentFlow("Modal dismissed")
@@ -3222,8 +3253,9 @@ fun F3PlayerScreen(
                 Row(
                     modifier = Modifier
                         .padding(horizontal = 16.dp, vertical = 12.dp)
-                        .fillMaxWidth(0.9f),
-                    verticalAlignment = Alignment.CenterVertically
+                        .widthIn(max = 420.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Warning,
@@ -3237,7 +3269,8 @@ fun F3PlayerScreen(
                         color = Color(0xFF92400E),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        lineHeight = 18.sp
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
