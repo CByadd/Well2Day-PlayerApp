@@ -25,8 +25,27 @@ val minorValue = vProps.getProperty("MINOR", "75").toInt()
 val vCodeValue = vProps.getProperty("VERSION_CODE", "1").toInt()
 val vNameValue = "$majorValue.${String.format("%02d", minorValue)}"
 
+// Release signing: every APK that goes to kiosks (OTA or ADB) MUST be signed with this one shared
+// keystore — an OTA is rejected on-device if its cert differs from the installed app's.
+// keystore.properties (project root, never commit): storeFile, storePassword, keyAlias, keyPassword
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
+}
+
 android {
     namespace = "com.example.playerapp"
+
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
     compileSdk = 36
     
     compileOptions {
@@ -74,6 +93,7 @@ android {
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -107,7 +127,9 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation("com.google.android.material:material:1.10.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("io.socket:socket.io-client:2.1.0")
+    implementation("io.socket:socket.io-client:2.1.0") {
+        exclude(group = "org.json", module = "json") // Android ships org.json; the duplicate fails release lint
+    }
     implementation("com.github.bumptech.glide:glide:4.16.0")
     implementation("com.github.bumptech.glide:compose:1.0.0-beta01")
     implementation("com.github.bumptech.glide:okhttp3-integration:4.16.0")

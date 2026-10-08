@@ -377,6 +377,12 @@ class UsbSerialManager(private val context: Context) {
     /** Prevents [onSensorStable] from firing more than once per weighing session. */
     @Volatile private var stableFired = false
 
+    /**
+     * Set by the UI thread via [rearmStableDetection]; consumed on the serial thread so
+     * [repetedHeight] and the counters are only ever touched there.
+     */
+    @Volatile private var rearmRequested = false
+
     // ── Callbacks ─────────────────────────────────────────────────────────────
 
     /**
@@ -490,6 +496,17 @@ class UsbSerialManager(private val context: Context) {
 
     fun setOnLogMessage(callback: (message: String) -> Unit) {
         this.onLogMessage = callback
+    }
+
+    /**
+     * Starts a fresh weighing session. [stableFired] otherwise only resets when the scale
+     * reads empty (≤ [ZERO_WEIGHT_THRESHOLD]); a load cell drifting at 0.6–3 kg between
+     * users, or a flow reset while the user is still standing, left it stuck true and the
+     * next person sat on "Processing" forever. Call whenever the UI starts waiting for a
+     * stable reading.
+     */
+    fun rearmStableDetection() {
+        rearmRequested = true
     }
 
     fun findAndConnectDevice() = requestUsbRefresh("requested")
@@ -1007,6 +1024,10 @@ class UsbSerialManager(private val context: Context) {
      */
     private fun processLine(rawLine: String) {
         val reading = parseSensorReading(rawLine) ?: return
+        if (rearmRequested) {
+            rearmRequested = false
+            resetAlgorithmState()
+        }
         val weightStr = reading.weight.toString()
         val heightStr = reading.height?.toString().orEmpty()
         val weightRaw = reading.weight

@@ -90,8 +90,6 @@ import com.example.playerapp.ui.QRModal
 import com.example.playerapp.ui.BMIDataModal
 import com.example.playerapp.ui.BMIModal
 import com.example.playerapp.ui.FortuneModal
-import com.example.playerapp.data.local.AppDatabase
-import com.example.playerapp.data.local.BmiEntity
 import com.example.playerapp.ui.PlayerScreen
 import com.example.playerapp.ui.F1Screen
 import com.example.playerapp.ui.ScreenLogo
@@ -130,7 +128,9 @@ class MainActivity : ComponentActivity() {
     // Flow type is hardcoded to F1 only - this app only supports F1 flow
     private val flowType: String = "F1"
     
-    private var isRegistered = false
+    // Compose state, not a plain var: registration completes asynchronously after setContent,
+    // and F3PlayerScreen only sees the new value if reading it triggers recomposition.
+    private var isRegistered by mutableStateOf(false)
     private var registrationJob: Job? = null
     private var assetCleanupJob: Job? = null
     private var screenId: String? = null
@@ -148,7 +148,11 @@ class MainActivity : ComponentActivity() {
         // Crash auto-restart is installed in Application (PlayerApp) for single-install safety.
 
         screenId = getOrCreateMachineId(this)
-        
+
+        // Flush offline BMI records left on the device — including ones saved by older
+        // builds, which never scheduled the upload. The worker no-ops when there are none.
+        Repository.scheduleBmiSync(this)
+
         // Keep playlist assets cached persistently across restarts.
         // We now validate against the server on startup/socket updates instead
         // of clearing files and forcing a full re-download.
@@ -569,6 +573,9 @@ fun F3PlayerScreen(
     val context = LocalContext.current
     val activity = context as? ComponentActivity
     val mainActivity = context as? MainActivity
+    // Long-running LaunchedEffect(Unit) loops capture the first composition's parameter;
+    // read this instead to see the current registration status.
+    val isRegisteredNow by rememberUpdatedState(isRegistered)
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val drawerWidthDp = (configuration.screenWidthDp * 0.45f).toInt()
     
@@ -1000,15 +1007,13 @@ fun F3PlayerScreen(
             if (!heightCalibrationEnabled) {
                 println("DEBUG: F3 - ⚠️ Height calibration is DISABLED. Proceeding with WEIGHT ONLY flow.")
             } else {
-                println("DEBUG: F3 - ⚠️ INVALID/MISSING HEIGHT: $height cm (valid range: 110-220cm). Proceeding with WEIGHT ONLY flow.")
+                println("DEBUG: F3 - ⚠️ INVALID/MISSING HEIGHT: $height cm (valid range: ${com.example.playerapp.data.UsbSerialManager.MIN_HEIGHT_CM}-${com.example.playerapp.data.UsbSerialManager.MAX_HEIGHT_CM}cm). Proceeding with WEIGHT ONLY flow.")
             }
         }
         
-        // Use raw height and weight data EXACTLY as received from USB (no conversion, no processing)
-        // Apply height calibration only for BMI calculation, but store raw values
-        val calibratedHeight = height + heightCalibration
-        println("DEBUG: F3 - Height calibration for BMI calculation: $height + $heightCalibration = $calibratedHeight cm")
-        println("DEBUG: F3 - Using RAW height for storage and display: $height cm (NO CONVERSION)")
+        // `height` is already calibrated: UsbSerialManager.validateHeight() applies the
+        // offset (and its sign) before the stable callback. Adding it again here doubled it.
+        val calibratedHeight = height
         
         // ========== PAYMENT FLOW LOGGING - FLOW STARTED ==========
         val currentFlowStartTime = System.currentTimeMillis()
@@ -1018,8 +1023,7 @@ fun F3PlayerScreen(
         println("[PAYMENT_FLOW] Timestamp: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date(currentFlowStartTime))}")
         println("[PAYMENT_FLOW] Screen ID: $screenId")
         println("[PAYMENT_FLOW] Weight (raw): $weight kg")
-        println("[PAYMENT_FLOW] Height (raw): $height cm")
-        println("[PAYMENT_FLOW] Height Calibration: $heightCalibration cm")
+        println("[PAYMENT_FLOW] Height (calibrated): $height cm (offset $heightCalibration cm already applied)")
         println("[PAYMENT_FLOW] Flow Type: $flowType")
         println("═══════════════════════════════════════════════════════════════")
         
@@ -1155,12 +1159,14 @@ fun F3PlayerScreen(
                     finalWebUrl = finalWebUrl.replace(Regex("appVersion=[^&#]*", RegexOption.IGNORE_CASE), "appVersion=f2")
                 }
                 
-                // Append token to webUrl
-                val tokenizedWebUrl = if (finalWebUrl.contains("?")) {
-                    "$finalWebUrl&paymentToken=${paymentToken}"
-                } else {
-                    "$finalWebUrl?paymentToken=${paymentToken}"
-                }
+                // Server URL ends in "#server=...": the token must go before the '#', or the
+                // web client (which reads location.search) never sees it. F2 is claim-only
+                // (no payment), so skip the token there — a shorter URL means a coarser,
+                // easier-to-scan QR on the fortune screen.
+                val (urlBase, urlFragment) = finalWebUrl.split('#', limit = 2).let { it[0] to it.getOrNull(1) }
+                val tokenizedWebUrl = if (isF2ModeActive) finalWebUrl else
+                    urlBase + (if ('?' in urlBase) "&" else "?") + "paymentToken=$paymentToken" +
+                        (urlFragment?.let { "#$it" } ?: "")
                 
                 // Update BMI data map with server response (webUrl with token and bmiId)
                 val updatedBmiDataMap = (bmiData ?: emptyMap()).toMutableMap()
@@ -1278,27 +1284,30 @@ fun F3PlayerScreen(
                 println("[PAYMENT_FLOW] Adding fallback webUrl to prevent QR screen stuck")
                 println("═══════════════════════════════════════════════════════════════")
                 
-                // Add fallback webUrl to prevent QR screen from being stuck
-                val updatedBmiDataMap = (bmiData ?: emptyMap()).toMutableMap()
-                updatedBmiDataMap["webUrl"] = "https://well2day.com/offline-payment" // Fallback URL
-                bmiData = updatedBmiDataMap
+                // Add fallback webUrl to prevent QR screen from being stuck (F1 only).
+                // F2 has no record to claim when creation failed, so leave webUrl unset and
+                // the fortune screen hides its "Save to Cloud" QR instead of encoding a dead link.
+                if (!isF2ModeActive) {
+                    val updatedBmiDataMap = (bmiData ?: emptyMap()).toMutableMap()
+                    updatedBmiDataMap["webUrl"] = "https://well2day.com/offline-payment" // Fallback URL
+                    bmiData = updatedBmiDataMap
+                }
                 println("[PAYMENT_FLOW] ✅ Added fallback webUrl to prevent stuck QR screen")
                 
                 // [OFFLINE_SYNC] Save to local database for later sync
                 coroutineScope.launch {
                     try {
-                    val database = AppDatabase.getDatabase(context)
-                    val bmiDao = database.bmiDao()
-                    val entity = BmiEntity(
-                        userId = null,
-                        height = (if (isHeightValid) calibratedHeight else 0f).toDouble(),
-                        weight = weight.toDouble(),
-                        bmi = if (isHeightValid) bmi.toDouble() else 0.0,
-                        category = if (isHeightValid) bmiCategory else "Weight Only",
-                        screenId = screenId,
-                        timestamp = System.currentTimeMillis()
-                    )
-                    bmiDao.insert(entity)
+                        // Goes through Repository so the upload worker is actually scheduled —
+                        // a bare dao.insert() here left records stranded on the device.
+                        Repository.saveBmiToLocal(
+                            context = context,
+                            userId = null,
+                            weight = weight.toDouble(),
+                            height = (if (isHeightValid) calibratedHeight else 0f).toDouble(),
+                            bmi = if (isHeightValid) bmi.toDouble() else 0.0,
+                            category = if (isHeightValid) bmiCategory else "Weight Only",
+                            screenId = screenId
+                        )
                         println("[PAYMENT_FLOW] ✅ BMI record saved locally for sync")
                     } catch (e: Exception) {
                         println("[PAYMENT_FLOW] ❌ Error saving BMI locally: ${e.message}")
@@ -1316,7 +1325,7 @@ fun F3PlayerScreen(
         kotlinx.coroutines.delay(60 * 1000)
         
         while (true) {
-            if (isRegistered) {
+            if (isRegisteredNow) {
                 println("DEBUG: F3 - Periodic fetch (10 minutes) - Fetching player info and updates")
                 
                 // Fetch player info (flow type, height calibration, playlist, enabled status)
@@ -1770,7 +1779,7 @@ fun F3PlayerScreen(
                 println("[SOCKET] 📡 Connection health check:")
                 println("[SOCKET]   Status: ${if (isConnected) "✅ CONNECTED" else "❌ DISCONNECTED"}")
                 println("[SOCKET]   Screen ID: $screenId")
-                println("[SOCKET]   Registered: $isRegistered")
+                println("[SOCKET]   Registered: $isRegisteredNow")
                 
                 if (!isConnected) {
                     println("[SOCKET] ⚠️ Socket disconnected, attempting reconnection...")
@@ -2122,6 +2131,7 @@ fun F3PlayerScreen(
 
         // Add sensor data callback - for real-time monitoring and instant feedback UI
         usbSerialManager.setOnSensorDataReceived { weight, height ->
+            com.example.playerapp.utils.OtaUpdater.onWeight(weight)
             // 1. Check if user stepped off after a failed reading lock
             if (failedReadingWeightLock) {
                 if (weight < 0.8f) {
@@ -2235,6 +2245,7 @@ fun F3PlayerScreen(
                         if (!cooldownActive) {
                             isDetectingBMI = true
                             paymentFlowState = PaymentFlowState.DETECTING // INSTANT FEEDBACK
+                            usbSerialManager.rearmStableDetection()
                             println("DEBUG: F3 - ⚡ DETECTION STARTED: Valid reading detected (weight=$weight kg), showing instant processing UI...")
                         } else {
                             val remaining = ((0L - (currentTime - lastFlowEndTime!!)) / 1000f).coerceAtLeast(0f)
@@ -2304,6 +2315,12 @@ fun F3PlayerScreen(
         }
     }
     
+    // OTA installs wait until this is true (see OtaUpdater)
+    LaunchedEffect(paymentFlowState, isFlowActive, isDetectingBMI) {
+        com.example.playerapp.utils.OtaUpdater.isFlowIdle =
+            paymentFlowState == PaymentFlowState.IDLE && !isFlowActive && !isDetectingBMI
+    }
+
     // Additional Monitor payment flow state to track flow completion for UI dismissals
     LaunchedEffect(paymentFlowState) {
         if (paymentFlowState == PaymentFlowState.IDLE && isFlowActive) {

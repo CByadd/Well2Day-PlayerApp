@@ -78,6 +78,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- OTA: relaunch after our own APK was replaced (backup for the install script's am start) -->
+        <receiver
+            android:name=".utils.OtaUpdater$PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Device Admin receiver for Device Owner kiosk provisioning -->
         <receiver
             android:name=".kiosk.KioskDeviceAdminReceiver"

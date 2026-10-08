@@ -1826,54 +1826,58 @@ object Repository {
             )
             database.bmiDao().insert(entity)
             println("DEBUG: Repository.saveBmiToLocal - Saved BMI record for offline sync")
-            
-            // Schedule sync worker
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-            
-            val syncRequest = OneTimeWorkRequestBuilder<BmiSyncWorker>()
-                .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
-                .build()
-            
-            WorkManager.getInstance(context).enqueueUniqueWork(
-                "bmi_sync",
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
-                syncRequest
-            )
         }
+        scheduleBmiSync(context)
     }
 
-    suspend fun createBMI(
-        userId: String?,
-        weight: Double,
-        height: Double,
-        bmi: Double,
-        category: String,
-        screenId: String
-    ): Boolean = withContext(Dispatchers.IO) {
+    /** Uploads any locally saved BMI records once the network is available. Safe to call often. */
+    fun scheduleBmiSync(context: Context) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val syncRequest = OneTimeWorkRequestBuilder<BmiSyncWorker>()
+            .setConstraints(constraints)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.MINUTES)
+            .build()
+
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "bmi_sync",
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            syncRequest
+        )
+    }
+
+    /**
+     * Uploads one offline record through the normal `POST /bmi` endpoint (there is no
+     * `/bmi/sync` route — the old call 404'd forever). `measuredAt` keeps the original
+     * reading time instead of the sync time.
+     *
+     * @return true when the record is finished with — uploaded, or permanently rejected
+     *   (4xx, retrying cannot help) — so the caller can delete it; false to retry later.
+     */
+    suspend fun syncOfflineBMI(record: BmiEntity): Boolean = withContext(Dispatchers.IO) {
         try {
             val json = JSONObject().apply {
-                put("userId", userId)
-                put("weightKg", weight)
-                put("heightCm", height)
-                put("screenId", screenId)
-                put("bmi", bmi)
-                put("category", category)
-                put("timestamp", System.currentTimeMillis())
+                put("weightKg", record.weight)
+                if (record.height > 0) put("heightCm", record.height) // omitted = weight-only
+                put("screenId", record.screenId)
+                put("appVersion", "F1")
+                put("measuredAt", record.timestamp)
             }
-
-            val requestBody = json.toString().toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
-                .url("$BASE_URL/bmi/sync")
-                .post(requestBody)
+                .url("$BASE_URL/bmi")
+                .post(json.toString().toRequestBody("application/json".toMediaType()))
                 .build()
 
-            val response = client.newCall(request).execute()
-            response.isSuccessful
+            client.newCall(request).execute().use { response ->
+                if (response.code in 400..499) {
+                    println("ERROR: Repository.syncOfflineBMI - record ${record.id} rejected (${response.code}), dropping")
+                }
+                response.isSuccessful || response.code in 400..499
+            }
         } catch (e: Exception) {
-            println("ERROR: Repository.createBMI (sync) - ${e.message}")
+            println("ERROR: Repository.syncOfflineBMI - ${e.message}")
             false
         }
     }

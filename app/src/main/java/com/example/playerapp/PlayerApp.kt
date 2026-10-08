@@ -11,6 +11,7 @@ class PlayerApp : Application() {
         super.onCreate()
         CacheManager.initialize(this)
         CrashRestartHandler.install(this)
+        com.example.playerapp.utils.OtaUpdater.start(this)
     }
 }
 

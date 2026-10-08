@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -90,7 +91,9 @@ fun RedesignedFortuneScreen(
     val cloudIconSize = if (isCompact) 26.dp else 34.dp
     val cloudTitleSize = if (isCompact) 13.sp else 16.sp
     val cloudSubSize = if (isCompact) 10.sp else 13.sp
-    val qrBoxSize = if (isCompact) 80.dp else 105.dp
+    // A ~150-char URL encodes to a ~57-module QR; at the old 80/105dp (minus padding)
+    // each module was ~1-2px after smoothing — phones could not read it.
+    val qrBoxSize = if (isCompact) 130.dp else 160.dp
 
     // Colors from the design
     val bgColor = Color(0xFFF7F8FA) // Light grayish background
@@ -368,10 +371,11 @@ fun RedesignedFortuneScreen(
                             Image(
                                 bitmap = qrBitmapSnapshot.asImageBitmap(),
                                 contentDescription = "QR Code",
-                                modifier = Modifier
-                                    .size(qrBoxSize)
-                                    .padding(8.dp),
-                                contentScale = ContentScale.Fit
+                                // ZXing's MARGIN already provides the quiet zone — no extra padding.
+                                modifier = Modifier.size(qrBoxSize),
+                                contentScale = ContentScale.Fit,
+                                // Nearest-neighbour scaling keeps module edges hard; bilinear blurs them.
+                                filterQuality = FilterQuality.None
                             )
                         }
                     }

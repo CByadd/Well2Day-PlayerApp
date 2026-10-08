@@ -25,6 +25,8 @@ object CrashRestartHandler {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
 
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            // May roll back a freshly OTA'd version that keeps crashing.
+            try { com.example.playerapp.utils.OtaUpdater.onCrash(appContext) } catch (_: Throwable) {}
             try {
                 val launchIntent = appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
                     ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)

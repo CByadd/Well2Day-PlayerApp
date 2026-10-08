@@ -23,15 +23,7 @@ class BmiSyncWorker(
         var allSynced = true
         for (record in records) {
             try {
-                val success = Repository.createBMI(
-                    userId = record.userId,
-                    weight = record.weight,
-                    height = record.height,
-                    bmi = record.bmi,
-                    category = record.category,
-                    screenId = record.screenId
-                )
-                if (success) {
+                if (Repository.syncOfflineBMI(record)) {
                     bmiDao.delete(record)
                     Log.i("BmiSyncWorker", "Synced and deleted record: ${record.id}")
                 } else {

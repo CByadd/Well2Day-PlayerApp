@@ -295,6 +295,8 @@ class SocketManager(private val context: Context) {
                 }
             }
 
+            socket?.on("app-update-available") { com.example.playerapp.utils.OtaUpdater.checkNow() }
+
             registerPlaylistRefreshListener("assets-updated")
             registerPlaylistRefreshListener("screen-config-changed")
             registerPlaylistRefreshListener("flow-drawer-images-updated")
